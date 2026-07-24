@@ -1,0 +1,10 @@
+{
+  "foundryUrl": "https://blobfishmaster.usw-18.palantirfoundry.com",
+  "widgetSet": {
+    "rid": "ri.widgetregistry..widget-set.64454520-8057-473c-8b1f-a2b802bd6410",
+    "directory": "./dist",
+    "autoVersion": {
+      "type": "package-json"
+    }
+  }
+}

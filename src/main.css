@@ -1,0 +1,33 @@
+html, body {
+    margin: 0;
+}
+
+.radix-themes:where([data-is-root-theme='true']) {
+    min-height: 0;
+    @supports(min-height: 100dvh) {
+        min-height: 0;
+    }
+}
+
+/* PalantirButton: focus ring and reduced-motion handling. These cannot be expressed through
+   React inline styles (no pseudo-class / media-query support), so they live here in the
+   project's single existing stylesheet rather than as a new component-specific CSS file. */
+.palantir-button-hit-area {
+    -webkit-tap-highlight-color: transparent;
+}
+
+.palantir-button-hit-area:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.palantir-button-visual-surface {
+    transition: background-color 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out, transform 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .palantir-button-visual-surface {
+        transition-duration: 0.01ms;
+        transform: none !important;
+    }
+}
