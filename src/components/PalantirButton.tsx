@@ -1,7 +1,4 @@
-import { MediaSets } from "@osdk/foundry.mediasets";
-//npm i -S @osdk/foundry.mediasets' to add it
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { client } from "../client.js";
 import type { PalantirButtonProps } from "../buttonWidget.types.js";
 import {
   computeBorderRadiusPx,
@@ -9,7 +6,6 @@ import {
   computeJoinedCornerRadii,
   computeShadows,
   HOVER_SCALE,
-  parseMediaSetItemUrl,
   ShadowSet,
 } from "../buttonWidget.utils.js";
 
@@ -65,10 +61,17 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   // preceding pointerup on this element.
   const pointerCommittedRef: React.MutableRefObject<boolean> = useRef(false);
 
+  // Mirrors `isPointerDown` (below) but is read/written synchronously, not via React state, so
+  // `handlePointerUp` can check "did a down on this button actually precede this up" without any
+  // risk of reading a stale, not-yet-committed value of the state version — see the comment on
+  // `handlePointerUp` for why that distinction matters.
+  const isPointerDownRef: React.MutableRefObject<boolean> = useRef(false);
+
   useEffect(() => {
     if (isDisabled) {
       setIsHovered(false);
       setIsPointerDown(false);
+      isPointerDownRef.current = false;
       setIsKeyboardPressed(false);
       setPendingActive(null);
       hasEmittedHoverRef.current = false;
@@ -120,6 +123,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   const handlePointerLeave: () => void = useCallback(() => {
     setIsHovered(false);
     setIsPointerDown(false);
+    isPointerDownRef.current = false;
     if (hasEmittedHoverRef.current) {
       hasEmittedHoverRef.current = false;
       onEvent({ type: "hoverEnd", id: config.id, active: effectiveActive });
@@ -132,30 +136,46 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     if (isDisabled) {
       return;
     }
+    isPointerDownRef.current = true;
     setIsPointerDown(true);
   }, [isDisabled]);
 
   /**
    * Handles the pointer being released over the button — the pointer/touch/mouse equivalent of a
-   * "click". Clears the pointer-down state and, if the release genuinely lands on this button
-   * while it's pressed and enabled, commits the activation in the very same handler call (so
-   * React batches both state updates into a single render — see `commitActivation` and the
-   * `pendingActive` comment for why that matters).
+   * "click". Clears the pointer-down state and, if a down on this same button preceded it and it's
+   * enabled, commits the activation in the very same handler call (so React batches both state
+   * updates into a single render — see `commitActivation` and the `pendingActive` comment for why
+   * that matters).
+   *
+   * The gate is `isPointerDownRef` alone, not `isHovered`. Without explicit pointer capture (which
+   * this button doesn't use), the browser only dispatches `pointerup` to this element at all when
+   * the release genuinely lands back on it — so `isPointerDownRef` being true here already proves
+   * "a down on this button was followed by an up on this button," the same guarantee a native
+   * click gives. Requiring `isHovered` too used to make this occasionally miss: `isHovered` is only
+   * set by a preceding `pointerenter`, which some browsers skip if the cursor was already resting
+   * on the button before it appeared/became enabled (no mouse movement occurred to trigger it) —
+   * in that case a perfectly legitimate click would fail this gate, fall through to the `handleClick`
+   * fallback path a render later, and reproduce the exact up-flicker this was meant to fix (rarely,
+   * hence it previously showed up "less frequently" rather than being fixed outright). Reading a
+   * ref instead of the `isPointerDown` state variable further avoids any chance of that check
+   * observing a not-yet-committed value.
    */
   const handlePointerUp: () => void = useCallback(() => {
-    const shouldCommit = isPointerDown && isHovered && !isDisabled;
+    const shouldCommit = isPointerDownRef.current && !isDisabled;
+    isPointerDownRef.current = false;
     setIsPointerDown(false);
     if (shouldCommit) {
       pointerCommittedRef.current = true;
       commitActivation();
     }
-  }, [isPointerDown, isHovered, isDisabled, commitActivation]);
+  }, [isDisabled, commitActivation]);
 
   /**
    * Handles a cancelled pointer interaction (e.g. the OS interrupts the gesture). Only resets the
    * pressed state — a cancel is never a commit, unlike `handlePointerUp`.
    */
   const handlePointerCancel: () => void = useCallback(() => {
+    isPointerDownRef.current = false;
     setIsPointerDown(false);
   }, []);
 
@@ -167,7 +187,10 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     if (!isPointerDown) {
       return;
     }
-    const handleWindowPointerUp = () => setIsPointerDown(false);
+    const handleWindowPointerUp = () => {
+      isPointerDownRef.current = false;
+      setIsPointerDown(false);
+    };
     window.addEventListener("pointerup", handleWindowPointerUp);
     window.addEventListener("pointercancel", handleWindowPointerUp);
     return () => {
@@ -222,65 +245,10 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     commitActivation();
   }, [commitActivation]);
 
-  // The icon is fetched (rather than set directly as an <img src>) and turned into a local
-  // blob: URL for the <img>, rather than pointing the <img> straight at iconSrc, because the
-  // custom-widget iframe doesn't share the parent Foundry stack's session cookies — a plain
-  // `<img src="...">` (or an uncredentialed fetch) against a Foundry-hosted image silently fails
-  // to authenticate. When iconSrc is a Foundry media-set item URL (…/media-set/{rid}/items/{rid}),
-  // the RIDs are parsed out and handed to the OSDK `read()` platform function, which authenticates
-  // through the widget's own client (see client.ts) instead of the browser's cookie jar. Any URL
-  // that doesn't match that shape (e.g. a plain public image URL) falls back to a normal
-  // credentialed fetch.
-  const [iconObjectUrl, setIconObjectUrl]: [string | null, React.Dispatch<React.SetStateAction<string | null>>] =
-    useState<string | null>(null);
-
-  useEffect(() => {
-    if (!config.iconSrc) {
-      setIconObjectUrl(null);
-      return;
-    }
-
-    let objectUrl: string | null = null;
-    let cancelled = false;
-
-    const mediaItem = parseMediaSetItemUrl(config.iconSrc);
-    const responsePromise: Promise<Response> = mediaItem
-      ? MediaSets.read(client, mediaItem.mediaSetRid, mediaItem.mediaItemRid)
-      : fetch(config.iconSrc, { credentials: "include" });
-
-    responsePromise
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Failed to load icon (status ${res.status})`);
-        }
-        return res.blob();
-      })
-      .then((blob) => {
-        if (cancelled) {
-          return;
-        }
-        objectUrl = URL.createObjectURL(blob);
-        setIconObjectUrl(objectUrl);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return;
-        }
-        setIconObjectUrl(null);
-        console.warn(`[PalantirButton] Icon failed to load for button "${config.id}".`, error);
-      });
-
-    // Revoke the specific blob: URL created by *this* effect run (not whatever is in state),
-    // so switching iconSrc rapidly can't revoke a URL a later run is still using.
-    return () => {
-      cancelled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [config.iconSrc, config.id]);
-
-  const pressedVisual: boolean = !isDisabled && ((isPointerDown && isHovered) || isKeyboardPressed);
+  // Not gated on `isHovered` for the same reason `handlePointerUp` no longer is (see its comment):
+  // `isPointerDown` alone is already reliable proof of a live press on this button, since it's
+  // only ever set from this button's own pointerdown/pointerup/leave handlers.
+  const pressedVisual: boolean = !isDisabled && (isPointerDown || isKeyboardPressed);
 
   // A switch that's active should stay visually "pushed in" (translated down, sunken shadow),
   // not just spring back up to a raised/resting shape with a darker color once the pointer or
@@ -349,60 +317,13 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     [config.interactiveMarginX, config.interactiveMarginY, joinedPosition],
   );
 
-  const hasBackgroundImage: boolean = !!config.backgroundImageSrc;
-
-  const overlayColor: string | null = useMemo(() => {
-    if (!hasBackgroundImage) {
-      return null;
-    }
-    switch (visualState) {
-      case "disabled":
-        return "rgba(255, 255, 255, 0.55)";
-      case "pressed":
-        return "rgba(0, 0, 0, 0.35)";
-      case "activeHovered":
-      case "active":
-        return "rgba(0, 0, 0, 0.25)";
-      case "hovered":
-        return "rgba(255, 255, 255, 0.12)";
-      default:
-        return null;
-    }
-  }, [hasBackgroundImage, visualState]);
-
-  const backgroundSizeForFit =
-    config.backgroundImageFit === "fill" ? "100% 100%" : config.backgroundImageFit;
-
-  const iconSizePx = Math.round(buttonHeightPx * 0.6);
-  const hasIcon = !!iconObjectUrl;
-
-  const iconNode = hasIcon ? (
-    <img
-      src={iconObjectUrl}
-      alt={config.iconAlt ?? ""}
-      draggable={false}
-      style={{
-        width: iconSizePx,
-        height: iconSizePx,
-        objectFit: "contain",
-        flexShrink: 0,
-        display: "block",
-      }}
-    />
-  ) : null;
-
-  const contentChildren: React.ReactNode =
-    config.iconPosition === "right" ? (
-      <>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{config.label}</span>
-        {iconNode}
-      </>
-    ) : (
-      <>
-        {iconNode}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{config.label}</span>
-      </>
-    );
+  // Icons and background images aren't supported: the custom-widget iframe can't authenticate
+  // image requests against Foundry (no shared session cookies, and no other viable path was
+  // found), so any such URL would just fail to load. Use an emoji directly in the button's
+  // `label` instead (e.g. `"🌍 Africa"`) — see infoOnEmoji in main.config.ts.
+  const contentChildren: React.ReactNode = (
+    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{config.label}</span>
+  );
 
   const hitAreaStyle: React.CSSProperties = {
     position: "relative",
@@ -446,23 +367,17 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     borderBottomRightRadius: radii.bottomRight,
     borderBottomLeftRadius: radii.bottomLeft,
     overflow: "hidden",
-    backgroundColor: hasBackgroundImage ? undefined : stateBackgroundColor,
-    // Kept stable across visual states — the overlay that used to be baked in here as a second
-    // linear-gradient layer (recomputing this string on every hover/press) is now its own
-    // absolutely positioned <span> below. That keeps this exact background-image string identical
-    // between renders, so the browser never treats it as a new image: an animated image (GIF/APNG)
-    // keeps playing instead of restarting, and there's no flash while the gradient layer swaps in
-    // and out.
-    backgroundImage: hasBackgroundImage ? `url(${config.backgroundImageSrc})` : undefined,
-    backgroundSize: hasBackgroundImage ? backgroundSizeForFit : undefined,
-    backgroundPosition: hasBackgroundImage ? "center" : undefined,
-    backgroundRepeat: hasBackgroundImage ? "no-repeat" : undefined,
+    backgroundColor: stateBackgroundColor,
     color: stateTextColor,
     fontSize: config.fontSizePx,
     fontWeight: 500,
     boxShadow: currentShadow,
     transform: `${pressTranslateTransform} ${hoverScaleTransform}`,
     transformOrigin: "center center",
+    // background-color/color are included here (not just transform/box-shadow) so a visual-state
+    // change — e.g. pressed -> active, where the two colors can be very different (a light
+    // "pressed" tone snapping straight to a near-black "active" tone) — fades instead of
+    // instantly snapping, which otherwise reads as a flash/flicker.
     transition: [
       "transform 120ms ease-out",
       "box-shadow 120ms ease-out",
@@ -472,20 +387,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     whiteSpace: "nowrap",
   };
 
-  // The state overlay for a background-image button now lives in its own layer instead of being
-  // baked into visualSurfaceStyle's backgroundImage (see the comment there) — this div just
-  // fades its own background-color, which is cheap and never disturbs the image underneath.
-  const overlayStyle: React.CSSProperties = {
-    position: "absolute",
-    inset: 0,
-    backgroundColor: overlayColor ?? "transparent",
-    transition: "background-color 120ms ease-out",
-    pointerEvents: "none",
-  };
-
   const contentStyle: React.CSSProperties = {
-    position: "relative",
-    zIndex: 1,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -515,7 +417,6 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       onClick={handleClick}
     >
       <span className="palantir-button-visual-surface" style={visualSurfaceStyle}>
-        {hasBackgroundImage && <span aria-hidden="true" style={overlayStyle} />}
         <span style={contentStyle}>{contentChildren}</span>
       </span>
     </button>

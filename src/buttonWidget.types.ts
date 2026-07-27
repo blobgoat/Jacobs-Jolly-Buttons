@@ -4,10 +4,6 @@
 
 export type ButtonMode = "momentary" | "switch";
 
-export type IconPosition = "left" | "right";
-
-export type BackgroundImageFit = "cover" | "contain" | "fill";
-
 export type LayoutMode = "joined" | "space-between" | "custom-gap";
 
 export type ButtonInteraction = "hover" | "hoverEnd" | "press" | "change";
@@ -23,13 +19,6 @@ export interface ButtonConfig {
   mode?: ButtonMode;
   defaultActive?: boolean;
   disabled?: boolean;
-
-  iconSrc?: string;
-  iconAlt?: string;
-  iconPosition?: IconPosition;
-
-  backgroundImageSrc?: string;
-  backgroundImageFit?: BackgroundImageFit;
 
   fontSizePx?: number;
   roundingCoefficient?: number;
@@ -60,8 +49,7 @@ export interface ButtonConfig {
 
 /**
  * A button configuration after validation, defaulting, and clamping.
- * All optional fields from `ButtonConfig` (other than the asset URLs, which
- * are intentionally left optional/undefined when not supplied) are resolved.
+ * All optional fields from `ButtonConfig` are resolved.
  */
 export interface ResolvedButtonConfig {
   id: string;
@@ -70,13 +58,6 @@ export interface ResolvedButtonConfig {
   mode: ButtonMode;
   defaultActive: boolean;
   disabled: boolean;
-
-  iconSrc?: string;
-  iconAlt?: string;
-  iconPosition: IconPosition;
-
-  backgroundImageSrc?: string;
-  backgroundImageFit: BackgroundImageFit;
 
   fontSizePx: number;
   roundingCoefficient: number;

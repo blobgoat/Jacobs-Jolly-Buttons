@@ -10,8 +10,6 @@ function makeButton(overrides: Partial<ResolvedButtonConfig>): ResolvedButtonCon
     mode: "momentary",
     defaultActive: false,
     disabled: false,
-    iconPosition: "left",
-    backgroundImageFit: "cover",
     fontSizePx: 14,
     roundingCoefficient: 0.2,
     paddingX: 14,

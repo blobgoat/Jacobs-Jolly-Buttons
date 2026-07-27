@@ -1,5 +1,4 @@
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
 
 // jsdom's matchMedia support is inconsistent across environments; guard with a deterministic
 // fallback so `useDarkTheme()` never throws.
@@ -32,15 +31,4 @@ if (typeof window !== "undefined") {
   if (typeof window.HTMLElement.prototype.releasePointerCapture !== "function") {
     window.HTMLElement.prototype.releasePointerCapture = () => {};
   }
-}
-
-// jsdom does not implement the Blob URL registry that PalantirButton's credentialed icon-fetch
-// relies on (URL.createObjectURL / URL.revokeObjectURL). Individual tests still mock
-// `global.fetch` themselves; this just keeps the createObjectURL/revokeObjectURL calls from
-// throwing "not a function" in that environment.
-if (typeof URL.createObjectURL !== "function") {
-  URL.createObjectURL = vi.fn(() => "blob:mock-object-url");
-}
-if (typeof URL.revokeObjectURL !== "function") {
-  URL.revokeObjectURL = vi.fn();
 }

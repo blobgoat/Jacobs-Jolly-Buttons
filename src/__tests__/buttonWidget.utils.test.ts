@@ -11,7 +11,6 @@ import {
   INVALID_JSON_MESSAGE,
   parseButtonsJson,
   parseGroupConfig,
-  parseMediaSetItemUrl,
   resolvePxValue,
   toButtonIdSet,
 } from "../buttonWidget.utils.js";
@@ -152,15 +151,11 @@ describe("parseButtonsJson", () => {
         id: "enum-test",
         label: "Enum Test",
         mode: "not-a-real-mode",
-        iconPosition: "up",
-        backgroundImageFit: "stretch",
       },
     ]);
     const result = parseButtonsJson(json);
     const button = result.buttons[0];
     expect(button.mode).toBe(DEFAULT_BUTTON_CONFIG.mode);
-    expect(button.iconPosition).toBe(DEFAULT_BUTTON_CONFIG.iconPosition);
-    expect(button.backgroundImageFit).toBe(DEFAULT_BUTTON_CONFIG.backgroundImageFit);
   });
 });
 
@@ -183,10 +178,10 @@ describe("autoQuoteJsonIdentifiers", () => {
 
   it("leaves numbers, booleans, and null unquoted", () => {
     const fixed = autoQuoteJsonIdentifiers(
-      "[{id: a, fontSizePx: -5, shadowCoefficient: 0.5, disabled: true, iconSrc: null}]",
+      "[{id: a, fontSizePx: -5, shadowCoefficient: 0.5, disabled: true, note: null}]",
     );
     expect(JSON.parse(fixed)).toEqual([
-      { id: "a", fontSizePx: -5, shadowCoefficient: 0.5, disabled: true, iconSrc: null },
+      { id: "a", fontSizePx: -5, shadowCoefficient: 0.5, disabled: true, note: null },
     ]);
   });
 
@@ -242,41 +237,6 @@ describe("toButtonIdSet", () => {
   });
 });
 
-describe("parseMediaSetItemUrl", () => {
-  it("extracts the media set and media item RIDs from a full media-set item URL", () => {
-    expect(
-      parseMediaSetItemUrl(
-        "https://blobfishmaster.usw-18.palantirfoundry.com/mio/api/media-set/ri.mio.main.media-set.265c6711-b0b9-4cdf-a1f8-ed3687e0ba14/items/ri.mio.main.media-item.019f80de-7362-745e-b4f5-ec047ccea69d",
-      ),
-    ).toEqual({
-      mediaSetRid: "ri.mio.main.media-set.265c6711-b0b9-4cdf-a1f8-ed3687e0ba14",
-      mediaItemRid: "ri.mio.main.media-item.019f80de-7362-745e-b4f5-ec047ccea69d",
-    });
-  });
-
-  it("still matches with a trailing path segment, e.g. /content", () => {
-    expect(parseMediaSetItemUrl("https://host/v2/mediasets/media-set/set-1/items/item-1/content")).toEqual({
-      mediaSetRid: "set-1",
-      mediaItemRid: "item-1",
-    });
-  });
-
-  it("still matches with a trailing query string", () => {
-    expect(parseMediaSetItemUrl("https://host/media-set/set-1/items/item-1?token=abc")).toEqual({
-      mediaSetRid: "set-1",
-      mediaItemRid: "item-1",
-    });
-  });
-
-  it("returns null for a plain, non-media-set URL", () => {
-    expect(parseMediaSetItemUrl("https://example.com/icons/star.svg")).toBeNull();
-  });
-
-  it("returns null for a relative path with no media-set segment", () => {
-    expect(parseMediaSetItemUrl("/icon.svg")).toBeNull();
-  });
-});
-
 describe("activeButtonIdsToArray", () => {
   it("converts a Set into a plain array", () => {
     expect(activeButtonIdsToArray(new Set(["a", "b"]))).toEqual(["a", "b"]);
@@ -317,8 +277,6 @@ function makeResolvedButton(overrides: Partial<ResolvedButtonConfig>): ResolvedB
     mode: "momentary",
     defaultActive: false,
     disabled: false,
-    iconPosition: "left",
-    backgroundImageFit: "cover",
     fontSizePx: 14,
     roundingCoefficient: 0.2,
     paddingX: 14,

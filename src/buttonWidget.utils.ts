@@ -1,7 +1,5 @@
 import type {
-  BackgroundImageFit,
   ButtonMode,
-  IconPosition,
   JoinedPosition,
   LayoutMode,
   ResolvedButtonConfig,
@@ -29,10 +27,6 @@ export const DEFAULT_BUTTON_CONFIG = {
   mode: "momentary" as ButtonMode,
   defaultActive: false,
   disabled: false,
-
-  iconPosition: "left" as IconPosition,
-
-  backgroundImageFit: "cover" as BackgroundImageFit,
 
   fontSizePx: 14,
   roundingCoefficient: 0.2,
@@ -144,10 +138,6 @@ export function parseStringValue(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
-export function parseOptionalStringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 export function parseBooleanValue(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -198,21 +188,6 @@ export function resolveButtonConfig(
     mode: parseEnumValue(raw.mode, ["momentary", "switch"] as const, DEFAULT_BUTTON_CONFIG.mode),
     defaultActive: parseBooleanValue(raw.defaultActive, DEFAULT_BUTTON_CONFIG.defaultActive),
     disabled: parseBooleanValue(raw.disabled, DEFAULT_BUTTON_CONFIG.disabled),
-
-    iconSrc: parseOptionalStringValue(raw.iconSrc),
-    iconAlt: parseOptionalStringValue(raw.iconAlt),
-    iconPosition: parseEnumValue(
-      raw.iconPosition,
-      ["left", "right"] as const,
-      DEFAULT_BUTTON_CONFIG.iconPosition,
-    ),
-
-    backgroundImageSrc: parseOptionalStringValue(raw.backgroundImageSrc),
-    backgroundImageFit: parseEnumValue(
-      raw.backgroundImageFit,
-      ["cover", "contain", "fill"] as const,
-      DEFAULT_BUTTON_CONFIG.backgroundImageFit,
-    ),
 
     // fontSizePx is a pixel dimension: a negative value resets it to the default (section on
     // negative-px-as-"undefined" below `resolvePxValue`).
@@ -556,27 +531,6 @@ export function toButtonIdSet(ids: readonly unknown[] | undefined): Set<string> 
 /** Converts a set of button IDs back into the plain string array Workshop's array parameters expect. */
 export function activeButtonIdsToArray(ids: Set<string> | string[]): string[] {
   return Array.from(ids);
-}
-
-/**
- * Extracts the media set / media item RIDs from a Foundry media-set item URL, e.g.
- * `.../media-set/{mediaSetRid}/items/{mediaItemRid}` (with or without a trailing path segment
- * like `/content`, and regardless of host or query string). Foundry's custom-widget iframe runs
- * without the parent stack's session cookies, so a plain `fetch(url, { credentials: "include" })`
- * against a pasted media URL can't authenticate — the RIDs parsed here are instead handed to the
- * OSDK `read()` platform function (via the widget's own authenticated client), which resolves
- * and signs the actual authenticated request itself. Returns `null` for any URL that isn't a
- * recognizable media-set item URL (e.g. a plain public image URL), so callers can fall back to a
- * normal fetch for those.
- */
-export function parseMediaSetItemUrl(
-  url: string,
-): { mediaSetRid: string; mediaItemRid: string } | null {
-  const match = url.match(/\/media-set\/([^/?#]+)\/items\/([^/?#]+)/);
-  if (!match) {
-    return null;
-  }
-  return { mediaSetRid: match[1], mediaItemRid: match[2] };
 }
 
 /**

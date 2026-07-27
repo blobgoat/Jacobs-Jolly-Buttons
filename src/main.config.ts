@@ -8,7 +8,7 @@ import { defineConfig } from "@osdk/widget.client";
 export default defineConfig({
   id: "widgetId",
   name: "Jacob's Jolly Buttons",
-  description: "A configurable, responsive button group for Workshop. Supports momentary and switch buttons, icons/background images, and per-button color/shape styling. Reports hover, press, and change events, with active-toggle state, back via output parameters.",
+  description: "A configurable, responsive button group for Workshop. Supports momentary and switch buttons with per-button color/shape styling. Reports hover, press, and change events, with active-toggle state, back via output parameters.",
   type: "workshop",
   parameters: {
     // --- Input parameters ---------------------------------------------------
@@ -29,15 +29,10 @@ export default defineConfig({
         'Info: mode ("momentary"|"switch"), defaultActive (bool, switch only), disabled (bool).',
       type: "boolean",
     },
-    infoOnIcon: {
+    infoOnEmoji: {
       displayName:
-        'Info: iconSrc (URL), iconAlt (alt text), iconPosition ("left"|"right", default "left").',
-      type: "boolean",
-    },
-    infoOnBgImage: {
-      displayName:
-        'Info: backgroundImageSrc (URL), backgroundImageFit ("cover"|"contain"|"fill", ' +
-        'default "cover").',
+        "Info: icons/images aren't supported. Put an emoji right in label instead, e.g. " +
+        '"🌍 Africa".',
       type: "boolean",
     },
     infoOnFontRounding: {
@@ -49,7 +44,7 @@ export default defineConfig({
     infoOnPadding: {
       displayName:
         "Info: paddingX (px, default 14), paddingY (px, default 8) — inner spacing around " +
-        "label/icon.",
+        "the label.",
       type: "boolean",
     },
     infoOnMargin: {
