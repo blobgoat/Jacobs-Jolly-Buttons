@@ -54,6 +54,13 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   //tracks the hover reference, or the object that was last hovered over, ensuring hovering doesnt emit multiple hover events
   const hasEmittedHoverRef: React.MutableRefObject<boolean> = useRef(false);
 
+  // Set to true right before a pointer-driven commit runs (see `handlePointerUp` below), and
+  // read/cleared by `handleClick`. The browser still fires a native "click" after pointerup for
+  // a real pointer interaction; without this flag that click would run the commit a second time.
+  // Left false, `handleClick` treats the click as keyboard-originated (Enter/Space), which has no
+  // preceding pointerup on this element.
+  const pointerCommittedRef: React.MutableRefObject<boolean> = useRef(false);
+
   useEffect(() => {
     if (isDisabled) {
       setIsHovered(false);
@@ -63,6 +70,29 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       hasEmittedHoverRef.current = false;
     }
   }, [isDisabled]);
+
+  /**
+   * Fires the press/change events (and, for a switch, the local `pendingActive` override) for an
+   * activation of this button. Called from `handlePointerUp` for pointer/touch interactions and
+   * from `handleClick` for keyboard-originated ones (see `pointerCommittedRef`).
+   */
+  const commitActivation: () => void = useCallback(() => {
+    if (isDisabled) {
+      return;
+    }
+    if (config.mode === "switch") {
+      const newActive = !active;
+      // Set synchronously, in the same handler/render as clearing isPointerDown, so the very same
+      // render already reflects the switch's outcome instead of waiting for it to round-trip back
+      // through the host as an updated `active` prop — see the comment on `pendingActive`'s
+      // declaration.
+      setPendingActive(newActive);
+      onEvent({ type: "press", id: config.id, active: newActive });
+      onEvent({ type: "change", id: config.id, active: newActive });
+    } else {
+      onEvent({ type: "press", id: config.id, active: false });
+    }
+  }, [isDisabled, config.mode, config.id, active, onEvent]);
 
   /**
    * Handles the pointer entering the button. Sets the hover state and emits a hover event if it hasn't been emitted yet.
@@ -102,9 +132,26 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   }, [isDisabled]);
 
   /**
-   * Ends the pointer press by resetting the pointer down state.
+   * Handles the pointer being released over the button — the pointer/touch/mouse equivalent of a
+   * "click". Clears the pointer-down state and, if the release genuinely lands on this button
+   * while it's pressed and enabled, commits the activation in the very same handler call (so
+   * React batches both state updates into a single render — see `commitActivation` and the
+   * `pendingActive` comment for why that matters).
    */
-  const endPointerPress: () => void = useCallback(() => {
+  const handlePointerUp: () => void = useCallback(() => {
+    const shouldCommit = isPointerDown && isHovered && !isDisabled;
+    setIsPointerDown(false);
+    if (shouldCommit) {
+      pointerCommittedRef.current = true;
+      commitActivation();
+    }
+  }, [isPointerDown, isHovered, isDisabled, commitActivation]);
+
+  /**
+   * Handles a cancelled pointer interaction (e.g. the OS interrupts the gesture). Only resets the
+   * pressed state — a cancel is never a commit, unlike `handlePointerUp`.
+   */
+  const handlePointerCancel: () => void = useCallback(() => {
     setIsPointerDown(false);
   }, []);
 
@@ -157,24 +204,19 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
 
 
   /**
-   * Handles the click event for the button, triggering the appropriate press and change events based on the button's mode and active state.
+   * Handles the button's native "click" event. For a real pointer/touch interaction this fires
+   * *after* `handlePointerUp` already committed the activation — `pointerCommittedRef` detects
+   * that and skips, so the action doesn't run twice. If the flag isn't set, this click has no
+   * preceding pointerup on this element, meaning it was triggered by the keyboard (Enter/Space on
+   * a focused button), so it commits directly.
    */
   const handleClick: () => void = useCallback(() => {
-    if (isDisabled) {
+    if (pointerCommittedRef.current) {
+      pointerCommittedRef.current = false;
       return;
     }
-    if (config.mode === "switch") {
-      const newActive = !active;
-      // Set synchronously, in the same tick as the events below, so the very next render already
-      // reflects the switch's outcome instead of waiting for it to round-trip back through the
-      // host as an updated `active` prop — see the comment on `pendingActive`'s declaration.
-      setPendingActive(newActive);
-      onEvent({ type: "press", id: config.id, active: newActive });
-      onEvent({ type: "change", id: config.id, active: newActive });
-    } else {
-      onEvent({ type: "press", id: config.id, active: false });
-    }
-  }, [isDisabled, config.mode, config.id, active, onEvent]);
+    commitActivation();
+  }, [commitActivation]);
 
   // The icon is fetched (rather than set directly as an <img src>) so the request carries the
   // browser's auth cookies via `credentials: "include"` — a plain <img src="..."> never sends
@@ -435,8 +477,8 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
       onPointerDown={handlePointerDown}
-      onPointerUp={endPointerPress}
-      onPointerCancel={endPointerPress}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
