@@ -1,9 +1,6 @@
 import type {
   BackgroundImageFit,
-  ButtonCollapseMode,
   ButtonMode,
-  CollapseStrategy,
-  GroupCollapseMode,
   IconPosition,
   JoinedPosition,
   LayoutMode,
@@ -22,12 +19,10 @@ export const NUMERIC_RANGES = {
   paddingY: { min: 0, max: 32 },
   interactiveMarginX: { min: 0, max: 32 },
   interactiveMarginY: { min: 0, max: 32 },
-  collapsePriority: { min: -1000, max: 1000 },
   shadowCoefficient: { min: 0, max: 4 },
   customGapPx: { min: 0, max: 128 },
   groupPaddingPx: { min: 0, max: 128 },
   buttonHeightPx: { min: 28, max: 96 },
-  tooltipDelayMs: { min: 0, max: 2000 },
 } as const;
 
 export const DEFAULT_BUTTON_CONFIG = {
@@ -38,9 +33,6 @@ export const DEFAULT_BUTTON_CONFIG = {
   iconPosition: "left" as IconPosition,
 
   backgroundImageFit: "cover" as BackgroundImageFit,
-
-  collapseMode: "auto" as ButtonCollapseMode,
-  collapsePriority: 0,
 
   fontSizePx: 14,
   roundingCoefficient: 0.2,
@@ -73,10 +65,7 @@ export const DEFAULT_GROUP_CONFIG: ResolvedGroupConfig = {
   layoutMode: "joined",
   customGapPx: 8,
   groupPaddingPx: 0,
-  collapseMode: "auto",
-  collapseStrategy: "priority",
   buttonHeightPx: 40,
-  tooltipDelayMs: 300,
   disabled: false,
 };
 
@@ -102,8 +91,40 @@ export function clampNumber(
   max: number,
   fallback: number,
 ): number {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
   const numeric = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, numeric));
+}
+
+/**
+ * Resolves a pixel-dimension configuration value the same way as `clampNumber`, but treats any
+ * negative number as an explicit "use the default" sentinel rather than clamping it up to `min`.
+ *
+ * Workshop parameter fields cannot be cleared back to blank once an author has typed a custom
+ * number into them; entering a negative value (e.g. `-1`) is the documented way to undo a
+ * customized pixel value and fall back to the default. This applies only to pixel-dimension
+ * fields (button height, gaps, padding, margins, font size) — not to unitless coefficients or
+ * priorities, which use negative numbers for other meaningful purposes.
+ */
+export function resolvePxValue(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  if (numeric < 0) {
     return fallback;
   }
   return Math.min(max, Math.max(min, numeric));
@@ -139,10 +160,32 @@ export interface ParsedButtonsResult {
   buttons: ResolvedButtonConfig[];
   /** Non-null when buttonsJson could not be parsed into a JSON array at all. */
   parseError: string | null;
+  /**
+   * A human-readable description of every entry in `buttonsJson` that was skipped (a missing
+   * required field, a duplicate id, or a non-object entry), naming the exact field involved and
+   * what it's for. Empty when every entry parsed successfully.
+   */
+  issues: string[];
+  /**
+   * True when `buttonsJson` did not parse as strict JSON on the first attempt, but did parse
+   * successfully after automatically adding quotation marks around unquoted object keys and/or
+   * string values (see `autoQuoteJsonIdentifiers`).
+   */
+  autoQuoted: boolean;
 }
 
 export const INVALID_JSON_MESSAGE = "The button configuration is not valid JSON.";
 export const NO_VALID_BUTTONS_MESSAGE = "No valid buttons are configured.";
+
+/**
+ * Human-readable descriptions of each required per-button field. Used to compose specific,
+ * actionable validation messages ("missing X — X is the thing that does Y") instead of a
+ * generic "invalid configuration" message.
+ */
+export const REQUIRED_BUTTON_FIELD_DESCRIPTIONS = {
+  id: 'a unique identifier for this button, used to reference it in "lastButtonId" and "activeButtonIdsJson"',
+  label: "the text displayed on the button",
+} as const satisfies Record<"id" | "label", string>;
 
 export function resolveButtonConfig(
   id: string,
@@ -171,19 +214,9 @@ export function resolveButtonConfig(
       DEFAULT_BUTTON_CONFIG.backgroundImageFit,
     ),
 
-    collapseMode: parseEnumValue(
-      raw.collapseMode,
-      ["auto", "always", "never"] as const,
-      DEFAULT_BUTTON_CONFIG.collapseMode,
-    ),
-    collapsePriority: clampNumber(
-      raw.collapsePriority,
-      NUMERIC_RANGES.collapsePriority.min,
-      NUMERIC_RANGES.collapsePriority.max,
-      DEFAULT_BUTTON_CONFIG.collapsePriority,
-    ),
-
-    fontSizePx: clampNumber(
+    // fontSizePx is a pixel dimension: a negative value resets it to the default (section on
+    // negative-px-as-"undefined" below `resolvePxValue`).
+    fontSizePx: resolvePxValue(
       raw.fontSizePx,
       NUMERIC_RANGES.fontSizePx.min,
       NUMERIC_RANGES.fontSizePx.max,
@@ -196,26 +229,28 @@ export function resolveButtonConfig(
       DEFAULT_BUTTON_CONFIG.roundingCoefficient,
     ),
 
-    paddingX: clampNumber(
+    // paddingX/paddingY/interactiveMarginX/interactiveMarginY are pixel dimensions: a negative
+    // value resets each field to its default rather than clamping up to its minimum.
+    paddingX: resolvePxValue(
       raw.paddingX,
       NUMERIC_RANGES.paddingX.min,
       NUMERIC_RANGES.paddingX.max,
       DEFAULT_BUTTON_CONFIG.paddingX,
     ),
-    paddingY: clampNumber(
+    paddingY: resolvePxValue(
       raw.paddingY,
       NUMERIC_RANGES.paddingY.min,
       NUMERIC_RANGES.paddingY.max,
       DEFAULT_BUTTON_CONFIG.paddingY,
     ),
 
-    interactiveMarginX: clampNumber(
+    interactiveMarginX: resolvePxValue(
       raw.interactiveMarginX,
       NUMERIC_RANGES.interactiveMarginX.min,
       NUMERIC_RANGES.interactiveMarginX.max,
       DEFAULT_BUTTON_CONFIG.interactiveMarginX,
     ),
-    interactiveMarginY: clampNumber(
+    interactiveMarginY: resolvePxValue(
       raw.interactiveMarginY,
       NUMERIC_RANGES.interactiveMarginY.min,
       NUMERIC_RANGES.interactiveMarginY.max,
@@ -265,30 +300,207 @@ export function resolveButtonConfig(
 }
 
 /**
+ * Best-effort repair for near-JSON text where object keys and/or string values are missing the
+ * quotation marks strict JSON requires — the most common mistake when someone hand-types
+ * configuration, e.g. `{id: run, label: Run Analysis}` instead of
+ * `{"id": "run", "label": "Run Analysis"}`.
+ *
+ * Scans the text once, left to right, tracking whether each position is inside an object or
+ * array and whether an object key or a value is expected next:
+ *   - Anything already inside a quoted string is copied through untouched (a single-quoted
+ *     string is re-quoted as double-quoted, since JSON only allows double quotes).
+ *   - A bareword found in key position (immediately followed by `:`) is quoted as-is — object
+ *     keys are always a single token.
+ *   - A bareword found in value position is quoted together with any further whitespace-
+ *     separated words up to the next structural character (`,`, `}`, `]`, `:`, or a quote), so
+ *     multi-word unquoted values like `Run Analysis` become one string instead of two stray
+ *     tokens — unless that first word is `true`, `false`, or `null`, which stay unquoted to
+ *     keep their boolean/null meaning.
+ *   - Numbers, punctuation, and whitespace are left exactly as-is.
+ *
+ * This is only ever invoked as a fallback after a strict `JSON.parse` has already failed, so it
+ * can never silently change text that was already valid JSON.
+ */
+export function autoQuoteJsonIdentifiers(input: string): string {
+  const KEYWORD_LITERALS = new Set(["true", "false", "null"]);
+  const isIdentifierStart = (ch: string) => /[A-Za-z_$]/.test(ch);
+  const isIdentifierPart = (ch: string) => /[A-Za-z0-9_$-]/.test(ch);
+
+  let result = "";
+  let i = 0;
+  const n = input.length;
+
+  // Tracks whether each currently-open container is an object or an array, so a bareword can be
+  // classified as a "key" (only meaningful directly inside an object) or a "value".
+  const containerStack: Array<"object" | "array"> = [];
+  let expecting: "key" | "value" = "value";
+  const currentContainer = () => containerStack[containerStack.length - 1];
+
+  while (i < n) {
+    const ch = input[i];
+
+    if (ch === '"' || ch === "'") {
+      // Copy an existing quoted string through untouched (respecting escapes), normalizing a
+      // single-quoted string to double-quoted since JSON only allows double quotes.
+      const quote = ch;
+      let j = i + 1;
+      let body = "";
+      while (j < n && input[j] !== quote) {
+        if (input[j] === "\\" && j + 1 < n) {
+          body += input[j] + input[j + 1];
+          j += 2;
+        } else {
+          body += input[j];
+          j += 1;
+        }
+      }
+      result += quote === '"' ? `"${body}"` : `"${body.replace(/"/g, '\\"')}"`;
+      i = j + 1; // skip past the closing quote (if any — an unterminated string is left as-is
+      // for JSON.parse to report)
+      continue;
+    }
+
+    if (ch === "{") {
+      result += ch;
+      containerStack.push("object");
+      expecting = "key";
+      i += 1;
+      continue;
+    }
+    if (ch === "[") {
+      result += ch;
+      containerStack.push("array");
+      expecting = "value";
+      i += 1;
+      continue;
+    }
+    if (ch === "}" || ch === "]") {
+      result += ch;
+      containerStack.pop();
+      i += 1;
+      continue;
+    }
+    if (ch === ":") {
+      result += ch;
+      expecting = "value";
+      i += 1;
+      continue;
+    }
+    if (ch === ",") {
+      result += ch;
+      expecting = currentContainer() === "object" ? "key" : "value";
+      i += 1;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      result += ch;
+      i += 1;
+      continue;
+    }
+
+    if (!isIdentifierStart(ch)) {
+      // Numbers and any other punctuation JSON.parse itself will judge.
+      result += ch;
+      i += 1;
+      continue;
+    }
+
+    if (expecting === "key") {
+      let j = i + 1;
+      while (j < n && isIdentifierPart(input[j])) {
+        j += 1;
+      }
+      result += `"${input.slice(i, j)}"`;
+      i = j;
+      continue;
+    }
+
+    // Value position: consume the first bareword token...
+    let j = i + 1;
+    while (j < n && isIdentifierPart(input[j])) {
+      j += 1;
+    }
+    const firstWord = input.slice(i, j);
+
+    if (KEYWORD_LITERALS.has(firstWord)) {
+      result += firstWord;
+      i = j;
+      continue;
+    }
+
+    // ...then keep extending through further whitespace-separated words until the next
+    // structural character, so a multi-word unquoted value becomes a single quoted string.
+    let end = j;
+    let valueEnd = j;
+    while (end < n) {
+      const c = input[end];
+      if (c === "," || c === "}" || c === "]" || c === ":" || c === '"' || c === "'") {
+        break;
+      }
+      if (/\s/.test(c)) {
+        end += 1;
+        continue;
+      }
+      end += 1;
+      valueEnd = end;
+    }
+    result += `"${input.slice(i, valueEnd)}"`;
+    i = valueEnd;
+  }
+
+  return result;
+}
+
+/**
  * Parses and validates `buttonsJson` into an array of resolved button
- * configurations. Invalid entries are skipped rather than throwing.
+ * configurations. Invalid entries are skipped rather than throwing; each skip is described in
+ * the returned `issues` array with the exact field involved and what it's for, rather than a
+ * generic "invalid configuration" message.
+ *
+ * If `json` does not parse as strict JSON, this automatically retries after quoting any bare
+ * object keys/values (see `autoQuoteJsonIdentifiers`) before giving up and reporting a parse
+ * error.
  */
 export function parseButtonsJson(json: string): ParsedButtonsResult {
   let raw: unknown;
+  let autoQuoted = false;
   try {
     raw = JSON.parse(json);
-  } catch {
-    console.warn("[PalantirButtonGroup] buttonsJson is not valid JSON.");
-    return { buttons: [], parseError: INVALID_JSON_MESSAGE };
+  } catch (originalError) {
+    try {
+      raw = JSON.parse(autoQuoteJsonIdentifiers(json));
+      autoQuoted = true;
+      // console.warn(
+      //   "[PalantirButtonGroup] buttonsJson had unquoted keys/values; automatically added quotation marks. Update buttonsJson to use proper quoted JSON to avoid relying on this.",
+      // );
+    } catch {
+      const detail = originalError instanceof Error ? originalError.message : String(originalError);
+      console.warn(`[PalantirButtonGroup] buttonsJson is not valid JSON: ${detail}`);
+      return { buttons: [], parseError: `${INVALID_JSON_MESSAGE} ${detail}`, issues: [], autoQuoted: false };
+    }
   }
 
   if (!Array.isArray(raw)) {
-    console.warn("[PalantirButtonGroup] buttonsJson must be a JSON array.");
-    return { buttons: [], parseError: INVALID_JSON_MESSAGE };
+    const actualType = raw === null ? "null" : typeof raw;
+    const detail = `Expected a JSON array of button objects (e.g. "[{ \\"id\\": ..., \\"label\\": ... }]"), but received ${actualType}.`;
+    console.warn(`[PalantirButtonGroup] ${detail}`);
+    return { buttons: [], parseError: `${INVALID_JSON_MESSAGE} ${detail}`, issues: [], autoQuoted: false };
   }
 
   const seenIds = new Set<string>();
   const buttons: ResolvedButtonConfig[] = [];
+  const issues: string[] = [];
+
+  const reportIssue = (message: string) => {
+    console.warn(`[PalantirButtonGroup] ${message}`);
+    issues.push(message);
+  };
 
   raw.forEach((entry, index) => {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      console.warn(
-        `[PalantirButtonGroup] Skipping button entry at index ${index}: expected an object.`,
+      reportIssue(
+        `Entry ${index} was skipped: expected a button object (e.g. "{ id, label, ... }"), ` +
+        `but received ${entry === null ? "null" : Array.isArray(entry) ? "an array" : typeof entry}.`,
       );
       return;
     }
@@ -298,21 +510,26 @@ export function parseButtonsJson(json: string): ParsedButtonsResult {
     const label = typeof record.label === "string" ? record.label.trim() : "";
 
     if (!id) {
-      console.warn(
-        `[PalantirButtonGroup] Skipping button entry at index ${index}: missing a non-empty "id".`,
+      reportIssue(
+        `Entry ${index} was skipped: missing required field "id" ` +
+        `(${REQUIRED_BUTTON_FIELD_DESCRIPTIONS.id}).`,
       );
       return;
     }
 
     if (!label) {
-      console.warn(
-        `[PalantirButtonGroup] Skipping button "${id}": missing a non-empty "label".`,
+      reportIssue(
+        `Button "${id}" (entry ${index}) was skipped: missing required field "label" ` +
+        `(${REQUIRED_BUTTON_FIELD_DESCRIPTIONS.label}).`,
       );
       return;
     }
 
     if (seenIds.has(id)) {
-      console.warn(`[PalantirButtonGroup] Skipping duplicate button id "${id}".`);
+      reportIssue(
+        `Button "${id}" (entry ${index}) was skipped: its "id" duplicates an earlier entry. ` +
+        `Every button's "id" must be unique — the first entry using this id was kept.`,
+      );
       return;
     }
 
@@ -320,27 +537,54 @@ export function parseButtonsJson(json: string): ParsedButtonsResult {
     buttons.push(resolveButtonConfig(id, label, record));
   });
 
-  return { buttons, parseError: null };
+  return { buttons, parseError: null, issues, autoQuoted };
 }
 
-/** Parses `activeButtonIdsJson` into a set of string IDs. Invalid input yields an empty set. */
-export function parseActiveButtonIdsJson(json: string | undefined): Set<string> {
+/**
+ * Parses any of the button-id-array parameters (`activeButtonIdsJson`, `disabledButtonIdsJson`,
+ * `hiddenButtonIdsJson`) into a set of string IDs. Invalid input yields an empty set. Also
+ * tolerates unquoted ids (e.g. `[run, layer]` instead of `["run", "layer"]`) via the same
+ * best-effort repair used for `buttonsJson`.
+ */
+export function parseButtonIdSetJson(json: string | undefined): Set<string> {
   if (!json) {
     return new Set();
   }
+  const toIdSet = (parsed: unknown): Set<string> | null =>
+    Array.isArray(parsed)
+      ? new Set(parsed.filter((value): value is string => typeof value === "string"))
+      : null;
   try {
-    const parsed: unknown = JSON.parse(json);
-    if (!Array.isArray(parsed)) {
+    return toIdSet(JSON.parse(json)) ?? new Set();
+  } catch {
+    try {
+      return toIdSet(JSON.parse(autoQuoteJsonIdentifiers(json))) ?? new Set();
+    } catch {
       return new Set();
     }
-    return new Set(parsed.filter((value): value is string => typeof value === "string"));
-  } catch {
-    return new Set();
   }
 }
 
 export function serializeActiveButtonIds(ids: Set<string> | string[]): string {
   return JSON.stringify(Array.from(ids));
+}
+
+/**
+ * Filters out hidden buttons and merges the force-disabled overlay onto the remainder, without
+ * mutating the input array or any button config object. Applies `hiddenButtonIdsJson` /
+ * `disabledButtonIdsJson` (parsed via `parseButtonIdSetJson`) on top of the buttons already
+ * resolved from `buttonsJson`: a hidden id is dropped entirely (as if removed from
+ * `buttonsJson`), a disabled id is force-disabled in addition to whatever its own `disabled`
+ * field already said.
+ */
+export function applyButtonVisibilityAndDisabled(
+  buttons: ResolvedButtonConfig[],
+  hiddenIds: ReadonlySet<string>,
+  disabledIds: ReadonlySet<string>,
+): ResolvedButtonConfig[] {
+  return buttons
+    .filter((button) => !hiddenIds.has(button.id))
+    .map((button) => (disabledIds.has(button.id) ? { ...button, disabled: true } : button));
 }
 
 /**
@@ -352,7 +596,7 @@ export function computeInitialActiveButtonIds(
   activeButtonIdsJson: string | undefined,
 ): Set<string> {
   const switchIds = new Set(buttons.filter((b) => b.mode === "switch").map((b) => b.id));
-  const parsed = parseActiveButtonIdsJson(activeButtonIdsJson);
+  const parsed = parseButtonIdSetJson(activeButtonIdsJson);
 
   if (activeButtonIdsJson !== undefined && activeButtonIdsJson.trim().length > 0) {
     // Only keep IDs that refer to known switch buttons; ignore unknown IDs.
@@ -382,10 +626,7 @@ export function parseGroupConfig(values: {
   layoutMode?: string;
   customGapPx?: number;
   groupPaddingPx?: number;
-  collapseMode?: string;
-  collapseStrategy?: string;
   buttonHeightPx?: number;
-  tooltipDelayMs?: number;
   disabled?: boolean;
 }): ResolvedGroupConfig {
   return {
@@ -394,39 +635,26 @@ export function parseGroupConfig(values: {
       ["joined", "space-between", "custom-gap"] as const satisfies readonly LayoutMode[],
       DEFAULT_GROUP_CONFIG.layoutMode,
     ),
-    customGapPx: clampNumber(
+    // customGapPx/groupPaddingPx are pixel dimensions: a negative value resets each field to its
+    // default rather than clamping up to its minimum.
+    customGapPx: resolvePxValue(
       values.customGapPx,
       NUMERIC_RANGES.customGapPx.min,
       NUMERIC_RANGES.customGapPx.max,
       DEFAULT_GROUP_CONFIG.customGapPx,
     ),
-    groupPaddingPx: clampNumber(
+    groupPaddingPx: resolvePxValue(
       values.groupPaddingPx,
       NUMERIC_RANGES.groupPaddingPx.min,
       NUMERIC_RANGES.groupPaddingPx.max,
       DEFAULT_GROUP_CONFIG.groupPaddingPx,
     ),
-    collapseMode: parseEnumValue(
-      values.collapseMode,
-      ["auto", "always", "never"] as const satisfies readonly GroupCollapseMode[],
-      DEFAULT_GROUP_CONFIG.collapseMode,
-    ),
-    collapseStrategy: parseEnumValue(
-      values.collapseStrategy,
-      ["priority", "all-at-once"] as const satisfies readonly CollapseStrategy[],
-      DEFAULT_GROUP_CONFIG.collapseStrategy,
-    ),
-    buttonHeightPx: clampNumber(
+    // buttonHeightPx is a pixel dimension: a negative value resets it to the default.
+    buttonHeightPx: resolvePxValue(
       values.buttonHeightPx,
       NUMERIC_RANGES.buttonHeightPx.min,
       NUMERIC_RANGES.buttonHeightPx.max,
       DEFAULT_GROUP_CONFIG.buttonHeightPx,
-    ),
-    tooltipDelayMs: clampNumber(
-      values.tooltipDelayMs,
-      NUMERIC_RANGES.tooltipDelayMs.min,
-      NUMERIC_RANGES.tooltipDelayMs.max,
-      DEFAULT_GROUP_CONFIG.tooltipDelayMs,
     ),
     disabled: parseBooleanValue(values.disabled, DEFAULT_GROUP_CONFIG.disabled),
   };
@@ -511,6 +739,34 @@ export function computeJoinedPosition(
 }
 
 // ---------------------------------------------------------------------------
+// Hover / press animation confinement
+// ---------------------------------------------------------------------------
+
+/** How much a button visually grows on hover, as a CSS `scale()` factor. */
+export const HOVER_SCALE = 1.08;
+
+/**
+ * Extra padding (px) the group container reserves on every side, on top of the author's
+ * configured `groupPaddingPx`, so the hover-grow (`HOVER_SCALE`) and press-down
+ * (`ShadowSet.translateYPx`) animations always render fully inside the container's box.
+ *
+ * Both effects are implemented purely as CSS `transform`s (never as layout-affecting width or
+ * padding changes), so they never reflow sibling buttons — but a transformed element still
+ * contributes to its ancestor's *scrollable* overflow region. Without this reserved buffer,
+ * growing or pushing down a button near the container's edge could clip the animation or,
+ * combined with the container's horizontal auto-scroll, spuriously reveal a scrollbar that
+ * eats into the row's width and visually shifts every other button.
+ */
+export function computeAnimationBufferPx(buttonHeightPx: number): number {
+  // The hover scale grows a button symmetrically in both directions, so on wide buttons (long
+  // labels) the horizontal growth can exceed this height-derived estimate slightly; the safety
+  // margin below is intentionally generous to cover typical label lengths.
+  const scaleGrowthPerSidePx = Math.ceil((buttonHeightPx * (HOVER_SCALE - 1)) / 2);
+  const maxPressDepthPx = Math.ceil(2 * NUMERIC_RANGES.shadowCoefficient.max);
+  return scaleGrowthPerSidePx + maxPressDepthPx + 8;
+}
+
+// ---------------------------------------------------------------------------
 // Shadow system (section 17)
 // ---------------------------------------------------------------------------
 
@@ -541,188 +797,3 @@ export function computeShadows(shadowCoefficient: number): ShadowSet {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Responsive collapse measurement (sections 22-25)
-// ---------------------------------------------------------------------------
-
-/** Approximate pixel width of a single character at a given font size. */
-const CHAR_WIDTH_FACTOR = 0.6;
-const ICON_LABEL_GAP_PX = 6;
-
-export function estimateLabelWidthPx(label: string, fontSizePx: number): number {
-  return Math.ceil(label.length * fontSizePx * CHAR_WIDTH_FACTOR);
-}
-
-/** Estimates the expanded (non-collapsed) visual-surface width of a button, in px. */
-export function estimateExpandedVisualWidthPx(
-  config: ResolvedButtonConfig,
-  hasIcon: boolean,
-  buttonHeightPx: number,
-): number {
-  const iconSize = hasIcon ? Math.round(buttonHeightPx * 0.6) : 0;
-  const iconAllowance = hasIcon ? iconSize + ICON_LABEL_GAP_PX : 0;
-  const labelWidth = estimateLabelWidthPx(config.label, config.fontSizePx);
-  return config.paddingX * 2 + iconAllowance + labelWidth;
-}
-
-export interface CollapseInputButton {
-  config: ResolvedButtonConfig;
-  hasIcon: boolean;
-}
-
-/** Computes the total required width (px) of the group given a set of collapsed button IDs. */
-export function computeRequiredGroupWidthPx(
-  buttons: CollapseInputButton[],
-  collapsedIds: ReadonlySet<string>,
-  layoutMode: LayoutMode,
-  customGapPx: number,
-  buttonHeightPx: number,
-): number {
-  const total = buttons.length;
-  if (total === 0) {
-    return 0;
-  }
-
-  let sum = 0;
-  buttons.forEach(({ config, hasIcon }, index) => {
-    const visualWidth = collapsedIds.has(config.id)
-      ? buttonHeightPx
-      : estimateExpandedVisualWidthPx(config, hasIcon, buttonHeightPx);
-
-    const joinedPosition = computeJoinedPosition(index, total, layoutMode);
-    const margins = computeEffectiveInteractiveMargins(
-      config.interactiveMarginX,
-      config.interactiveMarginY,
-      joinedPosition,
-    );
-
-    sum += visualWidth + margins.left + margins.right;
-  });
-
-  const gapCount = Math.max(0, total - 1);
-  const gapPx = layoutMode === "custom-gap" ? Math.max(0, customGapPx) : layoutMode === "joined" ? 0 : 0;
-  sum += gapCount * gapPx;
-
-  return sum;
-}
-
-export const COLLAPSE_BUFFER_PX = 8;
-export const EXPAND_BUFFER_PX = 16;
-
-export interface CollapseCandidate {
-  id: string;
-  collapsePriority: number;
-  index: number;
-}
-
-/** Deterministic collapse order for the "priority" strategy (section 24). */
-export function sortByCollapseOrder(candidates: CollapseCandidate[]): CollapseCandidate[] {
-  return [...candidates].sort((a, b) => {
-    if (a.collapsePriority !== b.collapsePriority) {
-      return a.collapsePriority - b.collapsePriority;
-    }
-    // Equal priority: the button later in the array collapses first.
-    return b.index - a.index;
-  });
-}
-
-export interface CollapsePlanResult {
-  collapsedIds: Set<string>;
-  overflow: boolean;
-}
-
-/**
- * Computes which auto-eligible buttons should be collapsed, given the current collapsed set,
- * the available width, and the selected collapse strategy. Applies hysteresis buffers to avoid
- * flicker (section 25).
- */
-export function computeCollapsePlan(options: {
-  buttons: CollapseInputButton[];
-  autoEligibleIds: Set<string>;
-  forcedCollapsedIds: Set<string>;
-  currentCollapsedAutoIds: Set<string>;
-  availableWidthPx: number;
-  layoutMode: LayoutMode;
-  customGapPx: number;
-  buttonHeightPx: number;
-  collapseStrategy: CollapseStrategy;
-}): CollapsePlanResult {
-  const {
-    buttons,
-    autoEligibleIds,
-    forcedCollapsedIds,
-    currentCollapsedAutoIds,
-    availableWidthPx,
-    layoutMode,
-    customGapPx,
-    buttonHeightPx,
-    collapseStrategy,
-  } = options;
-
-  const widthFor = (autoCollapsed: ReadonlySet<string>): number => {
-    const merged = new Set<string>(forcedCollapsedIds);
-    autoCollapsed.forEach((id) => merged.add(id));
-    return computeRequiredGroupWidthPx(buttons, merged, layoutMode, customGapPx, buttonHeightPx);
-  };
-
-  const candidates: CollapseCandidate[] = buttons
-    .filter(({ config }) => autoEligibleIds.has(config.id))
-    .map(({ config }, index) => ({ id: config.id, collapsePriority: config.collapsePriority, index }));
-
-  if (candidates.length === 0) {
-    const width = widthFor(new Set());
-    return { collapsedIds: new Set(), overflow: width > availableWidthPx };
-  }
-
-  const collapseOrder = sortByCollapseOrder(candidates);
-
-  if (collapseStrategy === "all-at-once") {
-    const allCollapsed = new Set(candidates.map((c) => c.id));
-    const currentlyAllCollapsed = candidates.every((c) => currentCollapsedAutoIds.has(c.id));
-
-    if (currentlyAllCollapsed) {
-      // Consider restoring all at once.
-      const expandedWidth = widthFor(new Set());
-      if (expandedWidth <= availableWidthPx - EXPAND_BUFFER_PX) {
-        return { collapsedIds: new Set(), overflow: false };
-      }
-      return { collapsedIds: allCollapsed, overflow: widthFor(allCollapsed) > availableWidthPx };
-    }
-
-    const expandedWidth = widthFor(new Set());
-    if (expandedWidth > availableWidthPx - COLLAPSE_BUFFER_PX) {
-      return { collapsedIds: allCollapsed, overflow: widthFor(allCollapsed) > availableWidthPx };
-    }
-    return { collapsedIds: new Set(), overflow: false };
-  }
-
-  // Priority strategy.
-  let collapsed = new Set(currentCollapsedAutoIds);
-
-  // Try to restore buttons (in reverse collapse order = last collapsed restored first).
-  const expandOrder = [...collapseOrder].reverse();
-  for (const candidate of expandOrder) {
-    if (!collapsed.has(candidate.id)) {
-      continue;
-    }
-    const trial = new Set(collapsed);
-    trial.delete(candidate.id);
-    if (widthFor(trial) <= availableWidthPx - EXPAND_BUFFER_PX) {
-      collapsed = trial;
-    }
-  }
-
-  // Collapse further buttons if the group still does not fit.
-  for (const candidate of collapseOrder) {
-    if (widthFor(collapsed) <= availableWidthPx - COLLAPSE_BUFFER_PX) {
-      break;
-    }
-    collapsed.add(candidate.id);
-  }
-
-  const finalWidth = widthFor(collapsed);
-  const allCollapsed = candidates.every((c) => collapsed.has(c.id));
-  const overflow = allCollapsed && finalWidth > availableWidthPx;
-
-  return { collapsedIds: collapsed, overflow };
-}

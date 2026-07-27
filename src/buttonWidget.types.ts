@@ -4,17 +4,11 @@
 
 export type ButtonMode = "momentary" | "switch";
 
-export type ButtonCollapseMode = "auto" | "always" | "never";
-
 export type IconPosition = "left" | "right";
 
 export type BackgroundImageFit = "cover" | "contain" | "fill";
 
 export type LayoutMode = "joined" | "space-between" | "custom-gap";
-
-export type GroupCollapseMode = "auto" | "always" | "never";
-
-export type CollapseStrategy = "priority" | "all-at-once";
 
 export type ButtonInteraction = "hover" | "press" | "change";
 
@@ -36,9 +30,6 @@ export interface ButtonConfig {
 
   backgroundImageSrc?: string;
   backgroundImageFit?: BackgroundImageFit;
-
-  collapseMode?: ButtonCollapseMode;
-  collapsePriority?: number;
 
   fontSizePx?: number;
   roundingCoefficient?: number;
@@ -87,9 +78,6 @@ export interface ResolvedButtonConfig {
   backgroundImageSrc?: string;
   backgroundImageFit: BackgroundImageFit;
 
-  collapseMode: ButtonCollapseMode;
-  collapsePriority: number;
-
   fontSizePx: number;
   roundingCoefficient: number;
 
@@ -122,10 +110,7 @@ export interface ResolvedGroupConfig {
   layoutMode: LayoutMode;
   customGapPx: number;
   groupPaddingPx: number;
-  collapseMode: GroupCollapseMode;
-  collapseStrategy: CollapseStrategy;
   buttonHeightPx: number;
-  tooltipDelayMs: number;
   disabled: boolean;
 }
 
@@ -142,11 +127,7 @@ export interface PalantirButtonGroupProps {
   customGapPx: number;
   groupPaddingPx: number;
 
-  collapseMode: GroupCollapseMode;
-  collapseStrategy: CollapseStrategy;
-
   buttonHeightPx: number;
-  tooltipDelayMs: number;
 
   disabled: boolean;
   activeButtonIds: Set<string>;
@@ -158,14 +139,11 @@ export interface PalantirButtonProps {
   config: ResolvedButtonConfig;
 
   active: boolean;
-  collapsed: boolean;
   groupDisabled: boolean;
 
   buttonHeightPx: number;
-  tooltipDelayMs: number;
 
   joinedPosition: JoinedPosition;
 
   onEvent: (event: InternalButtonEvent) => void;
-  onIconLoadStateChange: (buttonId: string, loaded: boolean) => void;
 }

@@ -1,19 +1,5 @@
 import "@testing-library/jest-dom/vitest";
 
-// jsdom does not implement ResizeObserver. Individual collapse-behavior tests install their
-// own controllable mock (capturing the callback so they can simulate resize notifications);
-// this fallback exists so that any test rendering `PalantirButtonGroup` without configuring
-// its own mock does not crash with a ReferenceError.
-class NoopResizeObserver implements ResizeObserver {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-}
-
-if (typeof globalThis.ResizeObserver === "undefined") {
-  globalThis.ResizeObserver = NoopResizeObserver;
-}
-
 // jsdom's matchMedia support is inconsistent across environments; guard with a deterministic
 // fallback so `useDarkTheme()` never throws.
 if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {

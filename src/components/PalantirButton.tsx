@@ -5,8 +5,8 @@ import {
   computeEffectiveInteractiveMargins,
   computeJoinedCornerRadii,
   computeShadows,
+  HOVER_SCALE,
 } from "../buttonWidget.utils.js";
-import { ButtonTooltip } from "./ButtonTooltip.js";
 
 type VisualState = "disabled" | "pressed" | "activeHovered" | "active" | "hovered" | "default";
 
@@ -19,13 +19,10 @@ type VisualState = "disabled" | "pressed" | "activeHovered" | "active" | "hovere
 export const PalantirButton: React.FC<PalantirButtonProps> = ({
   config,
   active,
-  collapsed,
   groupDisabled,
   buttonHeightPx,
-  tooltipDelayMs,
   joinedPosition,
   onEvent,
-  onIconLoadStateChange,
 }) => {
   const isDisabled = groupDisabled || config.disabled;
   const effectiveActive = config.mode === "switch" ? active : false;
@@ -124,16 +121,19 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     }
   }, [isDisabled, config.mode, config.id, active, onEvent]);
 
-  const handleIconLoad = useCallback(() => {
-    onIconLoadStateChange(config.id, true);
-  }, [onIconLoadStateChange, config.id]);
-
   const handleIconError = useCallback(() => {
-    onIconLoadStateChange(config.id, false);
     console.warn(`[PalantirButton] Icon failed to load for button "${config.id}".`);
-  }, [onIconLoadStateChange, config.id]);
+  }, [config.id]);
 
   const pressedVisual = !isDisabled && ((isPointerDown && isHovered) || isKeyboardPressed);
+
+  // A switch that's active should stay visually "pushed in" (translated down, sunken shadow),
+  // not just spring back up to a raised/resting shape with a darker color once the pointer or
+  // key is released — that spring-back is correct only for the transient, momentary tactile
+  // press. `pressedVisual` alone still covers that momentary case (including the tactile feel of
+  // pressing an active switch to toggle it back off); this adds the persistent "stays down"
+  // look for a switch that is currently active.
+  const isHeldDown = pressedVisual || (config.mode === "switch" && effectiveActive);
 
   const visualState: VisualState = isDisabled
     ? "disabled"
@@ -170,7 +170,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
 
   const currentShadow = isDisabled
     ? "none"
-    : pressedVisual
+    : isHeldDown
       ? shadows.pressed
       : isHovered
         ? shadows.hover
@@ -225,37 +225,30 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     <img
       src={config.iconSrc}
       alt={config.iconAlt ?? ""}
-      onLoad={handleIconLoad}
       onError={handleIconError}
+      draggable={false}
       style={{
         width: iconSizePx,
         height: iconSizePx,
         objectFit: "contain",
-        pointerEvents: "none",
         flexShrink: 0,
         display: "block",
       }}
     />
   ) : null;
 
-  let contentChildren: React.ReactNode;
-  if (collapsed) {
-    contentChildren = iconNode;
-  } else if (config.iconPosition === "right") {
-    contentChildren = (
+  const contentChildren: React.ReactNode =
+    config.iconPosition === "right" ? (
       <>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{config.label}</span>
         {iconNode}
       </>
-    );
-  } else {
-    contentChildren = (
+    ) : (
       <>
         {iconNode}
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{config.label}</span>
       </>
     );
-  }
 
   const hitAreaStyle: React.CSSProperties = {
     position: "relative",
@@ -272,7 +265,19 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     userSelect: "none",
     font: "inherit",
     flexShrink: 0,
+    // Raised only while hovered, so the button's own visual surface (which grows via a
+    // transform below) paints above its neighbors in the row instead of being overlapped by
+    // them — this is purely a paint-order change and never affects any element's layout box or
+    // its neighbors' positions.
+    zIndex: isHovered ? 2 : 0,
   };
+
+  // Hover grows the button in place (never affects layout — see zIndex/hitAreaStyle above and
+  // the group container's reserved animation buffer); an active/pressed switch or a momentary
+  // press stays pushed down. Both are ordinary CSS transforms, so they compose independently and
+  // never reflow sibling buttons.
+  const hoverScaleTransform = !isDisabled && isHovered ? `scale(${HOVER_SCALE})` : "scale(1)";
+  const pressTranslateTransform = isHeldDown ? `translateY(${shadows.translateYPx}px)` : "translateY(0px)";
 
   const visualSurfaceStyle: React.CSSProperties = {
     position: "relative",
@@ -281,8 +286,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     alignItems: "center",
     justifyContent: "center",
     height: buttonHeightPx,
-    width: collapsed ? buttonHeightPx : undefined,
-    padding: collapsed ? 0 : `${config.paddingY}px ${config.paddingX}px`,
+    padding: `${config.paddingY}px ${config.paddingX}px`,
     borderTopLeftRadius: radii.topLeft,
     borderTopRightRadius: radii.topRight,
     borderBottomRightRadius: radii.bottomRight,
@@ -305,7 +309,9 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     fontSize: config.fontSizePx,
     fontWeight: 500,
     boxShadow: currentShadow,
-    transform: pressedVisual ? `translateY(${shadows.translateYPx}px)` : "translateY(0px)",
+    transform: `${pressTranslateTransform} ${hoverScaleTransform}`,
+    transformOrigin: "center center",
+    transition: "transform 120ms ease-out, box-shadow 120ms ease-out",
     whiteSpace: "nowrap",
   };
 
@@ -313,20 +319,18 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: collapsed ? 0 : 8,
+    gap: 8,
     width: "100%",
     height: "100%",
     overflow: "hidden",
   };
 
-  const buttonElement = (
+  return (
     <button
       type="button"
       disabled={isDisabled}
       aria-pressed={config.mode === "switch" ? effectiveActive : undefined}
-      aria-label={collapsed ? config.label : undefined}
       data-button-id={config.id}
-      data-collapsed={collapsed ? "true" : "false"}
       data-visual-state={visualState}
       className="palantir-button-hit-area"
       style={hitAreaStyle}
@@ -344,11 +348,5 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
         <span style={contentStyle}>{contentChildren}</span>
       </span>
     </button>
-  );
-
-  return (
-    <ButtonTooltip label={config.label} delayMs={tooltipDelayMs} enabled={collapsed}>
-      {buttonElement}
-    </ButtonTooltip>
   );
 };

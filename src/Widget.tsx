@@ -4,9 +4,11 @@ import { PalantirButtonGroup } from "./components/PalantirButtonGroup.js";
 import { useWidgetContext } from "./context.js";
 import type { InternalButtonEvent } from "./buttonWidget.types.js";
 import {
+  applyButtonVisibilityAndDisabled,
   computeInitialActiveButtonIds,
   DEFAULT_BUTTONS_JSON,
   NO_VALID_BUTTONS_MESSAGE,
+  parseButtonIdSetJson,
   parseButtonsJson,
   parseGroupConfig,
   serializeActiveButtonIds,
@@ -20,11 +22,36 @@ export const Widget: React.FC = () => {
   const isLoading = parameters.state === "not-started" || parameters.state === "loading";
 
   const buttonsJsonValue = parameters.values.buttonsJson;
+  // Workshop delivers an unset string parameter as "" (there is no manifest-level default in
+  // this SDK), not `undefined` — so `?? DEFAULT_BUTTONS_JSON` alone never catches it and
+  // `JSON.parse("")` throws, surfacing as "The button configuration is not valid JSON." for any
+  // widget instance that has never had buttonsJson explicitly configured. Treat any blank /
+  // whitespace-only value the same as a missing one.
+  const effectiveButtonsJson =
+    typeof buttonsJsonValue === "string" && buttonsJsonValue.trim().length > 0
+      ? buttonsJsonValue
+      : DEFAULT_BUTTONS_JSON;
   const buttonsResult = useMemo(
-    () => parseButtonsJson(buttonsJsonValue ?? DEFAULT_BUTTONS_JSON),
-    [buttonsJsonValue],
+    () => parseButtonsJson(effectiveButtonsJson),
+    [effectiveButtonsJson],
   );
   const buttons = buttonsResult.buttons;
+
+  const disabledButtonIds = useMemo(
+    () => parseButtonIdSetJson(parameters.values.disabledButtonIdsJson),
+    [parameters.values.disabledButtonIdsJson],
+  );
+  const hiddenButtonIds = useMemo(
+    () => parseButtonIdSetJson(parameters.values.hiddenButtonIdsJson),
+    [parameters.values.hiddenButtonIdsJson],
+  );
+  // Hidden buttons are dropped entirely for rendering; force-disabled ids are merged onto the
+  // remainder. Active-state tracking below stays keyed off the full, unfiltered `buttons` list so
+  // a switch's state is preserved (and restored) even while it's hidden or force-disabled.
+  const displayButtons = useMemo(
+    () => applyButtonVisibilityAndDisabled(buttons, hiddenButtonIds, disabledButtonIds),
+    [buttons, hiddenButtonIds, disabledButtonIds],
+  );
 
   const groupConfig = useMemo(
     () =>
@@ -32,20 +59,14 @@ export const Widget: React.FC = () => {
         layoutMode: parameters.values.layoutMode,
         customGapPx: parameters.values.customGapPx,
         groupPaddingPx: parameters.values.groupPaddingPx,
-        collapseMode: parameters.values.collapseMode,
-        collapseStrategy: parameters.values.collapseStrategy,
         buttonHeightPx: parameters.values.buttonHeightPx,
-        tooltipDelayMs: parameters.values.tooltipDelayMs,
         disabled: parameters.values.disabled,
       }),
     [
       parameters.values.layoutMode,
       parameters.values.customGapPx,
       parameters.values.groupPaddingPx,
-      parameters.values.collapseMode,
-      parameters.values.collapseStrategy,
       parameters.values.buttonHeightPx,
-      parameters.values.tooltipDelayMs,
       parameters.values.disabled,
     ],
   );
@@ -119,26 +140,43 @@ export const Widget: React.FC = () => {
           </Skeleton>
         ) : buttonsResult.parseError ? (
           <Callout.Root color="red" role="alert">
-            <Callout.Text>{buttonsResult.parseError}</Callout.Text>
+            <Callout.Text style={{ whiteSpace: "pre-line" }}>
+              {buttonsResult.parseError}
+            </Callout.Text>
           </Callout.Root>
         ) : buttons.length === 0 ? (
-          <Callout.Root color="gray">
-            <Callout.Text>{NO_VALID_BUTTONS_MESSAGE}</Callout.Text>
+          <Callout.Root color="gray" role="alert">
+            <Callout.Text style={{ whiteSpace: "pre-line" }}>
+              {buttonsResult.issues.length > 0
+                ? [NO_VALID_BUTTONS_MESSAGE, ...buttonsResult.issues].join("\n")
+                : NO_VALID_BUTTONS_MESSAGE}
+            </Callout.Text>
           </Callout.Root>
         ) : (
-          <PalantirButtonGroup
-            buttons={buttons}
-            layoutMode={groupConfig.layoutMode}
-            customGapPx={groupConfig.customGapPx}
-            groupPaddingPx={groupConfig.groupPaddingPx}
-            collapseMode={groupConfig.collapseMode}
-            collapseStrategy={groupConfig.collapseStrategy}
-            buttonHeightPx={groupConfig.buttonHeightPx}
-            tooltipDelayMs={groupConfig.tooltipDelayMs}
-            disabled={groupConfig.disabled}
-            activeButtonIds={activeButtonIds}
-            onButtonEvent={handleButtonEvent}
-          />
+          <>
+            {buttonsResult.issues.length > 0 && (
+              <Callout.Root color="amber" role="status" mb="2">
+                <Callout.Text style={{ whiteSpace: "pre-line" }}>
+                  {[
+                    `${buttonsResult.issues.length} button ${
+                      buttonsResult.issues.length === 1 ? "entry was" : "entries were"
+                    } skipped:`,
+                    ...buttonsResult.issues,
+                  ].join("\n")}
+                </Callout.Text>
+              </Callout.Root>
+            )}
+            <PalantirButtonGroup
+              buttons={displayButtons}
+              layoutMode={groupConfig.layoutMode}
+              customGapPx={groupConfig.customGapPx}
+              groupPaddingPx={groupConfig.groupPaddingPx}
+              buttonHeightPx={groupConfig.buttonHeightPx}
+              disabled={groupConfig.disabled}
+              activeButtonIds={activeButtonIds}
+              onButtonEvent={handleButtonEvent}
+            />
+          </>
         )}
       </Box>
     </Theme>
