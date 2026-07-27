@@ -4,14 +4,14 @@ import { PalantirButtonGroup } from "./components/PalantirButtonGroup.js";
 import { useWidgetContext } from "./context.js";
 import type { InternalButtonEvent } from "./buttonWidget.types.js";
 import {
+  activeButtonIdsToArray,
   applyButtonVisibilityAndDisabled,
   computeInitialActiveButtonIds,
   DEFAULT_BUTTONS_JSON,
   NO_VALID_BUTTONS_MESSAGE,
-  parseButtonIdSetJson,
   parseButtonsJson,
   parseGroupConfig,
-  serializeActiveButtonIds,
+  toButtonIdSet,
 } from "./buttonWidget.utils.js";
 import { useDarkTheme } from "./useDarkTheme.js";
 
@@ -38,12 +38,12 @@ export const Widget: React.FC = () => {
   const buttons = buttonsResult.buttons;
 
   const disabledButtonIds = useMemo(
-    () => parseButtonIdSetJson(parameters.values.disabledButtonIdsJson),
-    [parameters.values.disabledButtonIdsJson],
+    () => toButtonIdSet(parameters.values.disabledButtonIdsArray),
+    [parameters.values.disabledButtonIdsArray],
   );
   const hiddenButtonIds = useMemo(
-    () => parseButtonIdSetJson(parameters.values.hiddenButtonIdsJson),
-    [parameters.values.hiddenButtonIdsJson],
+    () => toButtonIdSet(parameters.values.hiddenButtonIdsArray),
+    [parameters.values.hiddenButtonIdsArray],
   );
   // Hidden buttons are dropped entirely for rendering; force-disabled ids are merged onto the
   // remainder. Active-state tracking below stays keyed off the full, unfiltered `buttons` list so
@@ -95,6 +95,17 @@ export const Widget: React.FC = () => {
         return;
       }
 
+      if (event.type === "hoverEnd") {
+        emitEvent("buttonHoverEnded", {
+          parameterUpdates: {
+            lastButtonId: event.id,
+            lastButtonInteraction: "hoverEnd",
+            lastButtonActive: event.active,
+          },
+        });
+        return;
+      }
+
       if (event.type === "press") {
         emitEvent("buttonPressed", {
           parameterUpdates: {
@@ -120,7 +131,7 @@ export const Widget: React.FC = () => {
           lastButtonId: event.id,
           lastButtonInteraction: "change",
           lastButtonActive: event.active,
-          activeButtonIdsJson: serializeActiveButtonIds(nextActiveButtonIds),
+          activeButtonIdsJson: activeButtonIdsToArray(nextActiveButtonIds),
         },
       });
     },
@@ -128,8 +139,19 @@ export const Widget: React.FC = () => {
   );
 
   return (
-    <Theme appearance={isDarkTheme ? "dark" : "light"}>
-      <Box p="2">
+    <Theme appearance={isDarkTheme ? "dark" : "light"} hasBackground={false}>
+      <Flex
+        direction="column"
+        align="center"
+        justify="center"
+        p="2"
+        style={{
+          width: "100%",
+          height: "100%",
+          boxSizing: "border-box",
+          overflowY: "hidden",
+        }}
+      >
         {isLoading ? (
           <Skeleton>
             <Flex gap="2" align="center">
@@ -178,7 +200,7 @@ export const Widget: React.FC = () => {
             />
           </>
         )}
-      </Box>
+      </Flex>
     </Theme>
   );
 };

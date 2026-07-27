@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PalantirButton } from "../components/PalantirButton.js";
@@ -201,6 +201,46 @@ describe("PalantirButton switch behavior", () => {
   });
 });
 
+describe("PalantirButton hover-exit event", () => {
+  it("emits a hoverEnd event when the pointer leaves after a hover", async () => {
+    const { onEvent } = renderButton();
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.hover(button);
+    await user.unhover(button);
+    const hoverEndEvents = onEvent.mock.calls.filter(([event]) => event.type === "hoverEnd");
+    expect(hoverEndEvents).toHaveLength(1);
+    expect(hoverEndEvents[0][0]).toEqual({ type: "hoverEnd", id: "test-button", active: false });
+  });
+
+  it("does not emit hoverEnd for a pointer-leave with no preceding hover", () => {
+    const { onEvent } = renderButton();
+    const button = screen.getByRole("button", { name: "Test Button" });
+    // A pointerleave with no matching pointerenter first (the component guards against emitting
+    // hoverEnd when no "hover" was ever emitted for this button).
+    fireEvent.pointerLeave(button);
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it("emits hoverEnd with the switch's active state", async () => {
+    const { onEvent } = renderButton({ mode: "switch" }, { active: true });
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.hover(button);
+    await user.unhover(button);
+    expect(onEvent).toHaveBeenCalledWith({ type: "hoverEnd", id: "test-button", active: true });
+  });
+
+  it("emits no hover or hoverEnd events when disabled", async () => {
+    const { onEvent } = renderButton({ disabled: true });
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.hover(button);
+    await user.unhover(button);
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+});
+
 describe("PalantirButton hover-grow", () => {
   it("scales the visual surface up on hover and back down on hover-out", async () => {
     const { container } = renderButton();
@@ -258,6 +298,13 @@ describe("PalantirButton interactive margin / hit area", () => {
   });
 
   it("triggers the same button action when pressing the icon", async () => {
+    // The icon is now fetched with credentials (so protected images render correctly) rather than
+    // set directly as an <img src>, so the <img> only appears once that fetch resolves.
+    const mockBlob = new Blob(["fake-svg"], { type: "image/svg+xml" });
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValue({ ok: true, blob: () => Promise.resolve(mockBlob) } as Response);
+
     const onEvent = vi.fn<(event: InternalButtonEvent) => void>();
     const { container } = render(
       <PalantirButton
@@ -269,16 +316,26 @@ describe("PalantirButton interactive margin / hit area", () => {
         onEvent={onEvent}
       />,
     );
+
     // The icon is decorative (empty alt) so it has no accessible role; query it directly.
-    const icon = container.querySelector("img") as HTMLImageElement;
-    expect(icon).not.toBeNull();
+    const icon = await waitFor(() => {
+      const img = container.querySelector("img") as HTMLImageElement | null;
+      expect(img).not.toBeNull();
+      return img as HTMLImageElement;
+    });
+    expect(fetchSpy).toHaveBeenCalledWith("/icon.svg", { credentials: "include" });
+
     const user = userEvent.setup();
     await user.click(icon);
     expect(onEvent).toHaveBeenCalledWith({ type: "press", id: "test-button", active: false });
+
+    fetchSpy.mockRestore();
   });
 
-  it("warns when the icon fails to load", () => {
+  it("warns and renders no icon when the credentialed icon fetch fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 404 } as Response);
+
     const { container } = render(
       <PalantirButton
         config={{ ...BASE_CONFIG, iconSrc: "/icon.svg" }}
@@ -289,9 +346,13 @@ describe("PalantirButton interactive margin / hit area", () => {
         onEvent={vi.fn()}
       />,
     );
-    const icon = container.querySelector("img") as HTMLImageElement;
-    icon.dispatchEvent(new Event("error"));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("test-button"));
+
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("test-button"));
+    });
+    expect(container.querySelector("img")).toBeNull();
+
+    fetchSpy.mockRestore();
     warnSpy.mockRestore();
   });
 });

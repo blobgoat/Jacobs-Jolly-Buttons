@@ -31,12 +31,12 @@ function setContext(overrides: {
         groupPaddingPx: 0,
         buttonHeightPx: 40,
         disabled: false,
-        disabledButtonIdsJson: "[]",
-        hiddenButtonIdsJson: "[]",
+        disabledButtonIdsArray: [],
+        hiddenButtonIdsArray: [],
         lastButtonId: "",
         lastButtonInteraction: "",
         lastButtonActive: false,
-        activeButtonIdsJson: "[]",
+        activeButtonIdsJson: [],
         ...overrides.values,
       },
     },
@@ -85,6 +85,23 @@ describe("Widget Foundry event wiring", () => {
     });
   });
 
+  it("emits buttonHoverEnded with the correct parameter updates when the pointer leaves", async () => {
+    const emitEvent = setContext({});
+    render(<Widget />);
+    const button = screen.getByRole("button", { name: "Run" });
+    const user = userEvent.setup();
+    await user.hover(button);
+    await user.unhover(button);
+
+    expect(emitEvent).toHaveBeenCalledWith("buttonHoverEnded", {
+      parameterUpdates: {
+        lastButtonId: "run",
+        lastButtonInteraction: "hoverEnd",
+        lastButtonActive: false,
+      },
+    });
+  });
+
   it("emits buttonPressed with the correct parameter updates", async () => {
     const emitEvent = setContext({});
     render(<Widget />);
@@ -113,7 +130,7 @@ describe("Widget Foundry event wiring", () => {
         lastButtonId: "layer",
         lastButtonInteraction: "change",
         lastButtonActive: true,
-        activeButtonIdsJson: JSON.stringify(["layer"]),
+        activeButtonIdsJson: ["layer"],
       },
     });
   });
@@ -134,7 +151,7 @@ describe("Widget Foundry event wiring", () => {
         lastButtonId: "layer",
         lastButtonInteraction: "change",
         lastButtonActive: false,
-        activeButtonIdsJson: JSON.stringify([]),
+        activeButtonIdsJson: [],
       },
     });
   });
@@ -221,7 +238,7 @@ describe("Widget Foundry event wiring", () => {
   });
 
   it("initializes a switch button's active state from activeButtonIdsJson", () => {
-    setContext({ values: { activeButtonIdsJson: JSON.stringify(["layer"]) } });
+    setContext({ values: { activeButtonIdsJson: ["layer"] } });
     render(<Widget />);
     const button = screen.getByRole("button", { name: "Layer" });
     expect(button).toHaveAttribute("aria-pressed", "true");
@@ -241,20 +258,20 @@ describe("Widget disabled propagation", () => {
   });
 });
 
-describe("Widget hiddenButtonIdsJson / disabledButtonIdsJson", () => {
+describe("Widget hiddenButtonIdsArray / disabledButtonIdsArray", () => {
   beforeEach(() => {
     mockedUseWidgetContext.mockReset();
   });
 
-  it("does not render a button listed in hiddenButtonIdsJson", () => {
-    setContext({ values: { hiddenButtonIdsJson: JSON.stringify(["layer"]) } });
+  it("does not render a button listed in hiddenButtonIdsArray", () => {
+    setContext({ values: { hiddenButtonIdsArray: ["layer"] } });
     render(<Widget />);
     expect(screen.getByRole("button", { name: "Run" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Layer" })).not.toBeInTheDocument();
   });
 
-  it("force-disables a button listed in disabledButtonIdsJson without disabling the others", () => {
-    setContext({ values: { disabledButtonIdsJson: JSON.stringify(["run"]) } });
+  it("force-disables a button listed in disabledButtonIdsArray without disabling the others", () => {
+    setContext({ values: { disabledButtonIdsArray: ["run"] } });
     render(<Widget />);
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Layer" })).not.toBeDisabled();
@@ -263,15 +280,15 @@ describe("Widget hiddenButtonIdsJson / disabledButtonIdsJson", () => {
   it("preserves a hidden switch's active state so it's restored once un-hidden", () => {
     const emitEvent = setContext({
       values: {
-        activeButtonIdsJson: JSON.stringify(["layer"]),
-        hiddenButtonIdsJson: JSON.stringify(["layer"]),
+        activeButtonIdsJson: ["layer"],
+        hiddenButtonIdsArray: ["layer"],
       },
     });
     const { rerender } = render(<Widget />);
     expect(screen.queryByRole("button", { name: "Layer" })).not.toBeInTheDocument();
 
     setContext({
-      values: { activeButtonIdsJson: JSON.stringify(["layer"]), hiddenButtonIdsJson: "[]" },
+      values: { activeButtonIdsJson: ["layer"], hiddenButtonIdsArray: [] },
       emitEvent,
     });
     rerender(<Widget />);
@@ -279,17 +296,17 @@ describe("Widget hiddenButtonIdsJson / disabledButtonIdsJson", () => {
   });
 
   it("renders an empty group instead of an error when every button is hidden", () => {
-    setContext({ values: { hiddenButtonIdsJson: JSON.stringify(["run", "layer"]) } });
+    setContext({ values: { hiddenButtonIdsArray: ["run", "layer"] } });
     render(<Widget />);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(/No valid buttons are configured\./)).not.toBeInTheDocument();
   });
 
-  it("does not let disabledButtonIdsJson re-enable a button that's individually disabled in buttonsJson", () => {
+  it("does not let disabledButtonIdsArray re-enable a button that's individually disabled in buttonsJson", () => {
     setContext({
       values: {
         buttonsJson: JSON.stringify([{ id: "run", label: "Run", disabled: true }]),
-        disabledButtonIdsJson: "[]",
+        disabledButtonIdsArray: [],
       },
     });
     render(<Widget />);

@@ -541,38 +541,27 @@ export function parseButtonsJson(json: string): ParsedButtonsResult {
 }
 
 /**
- * Parses any of the button-id-array parameters (`activeButtonIdsJson`, `disabledButtonIdsJson`,
- * `hiddenButtonIdsJson`) into a set of string IDs. Invalid input yields an empty set. Also
- * tolerates unquoted ids (e.g. `[run, layer]` instead of `["run", "layer"]`) via the same
- * best-effort repair used for `buttonsJson`.
+ * Converts any of the button-id-array parameters (`activeButtonIdsJson`,
+ * `disabledButtonIdsArray`, `hiddenButtonIdsArray` — all Workshop `array`/`subType: "string"`
+ * parameters, not JSON strings) into a `Set<string>`. Missing/non-array input yields an empty
+ * set; non-string entries are dropped defensively.
  */
-export function parseButtonIdSetJson(json: string | undefined): Set<string> {
-  if (!json) {
+export function toButtonIdSet(ids: readonly unknown[] | undefined): Set<string> {
+  if (!Array.isArray(ids)) {
     return new Set();
   }
-  const toIdSet = (parsed: unknown): Set<string> | null =>
-    Array.isArray(parsed)
-      ? new Set(parsed.filter((value): value is string => typeof value === "string"))
-      : null;
-  try {
-    return toIdSet(JSON.parse(json)) ?? new Set();
-  } catch {
-    try {
-      return toIdSet(JSON.parse(autoQuoteJsonIdentifiers(json))) ?? new Set();
-    } catch {
-      return new Set();
-    }
-  }
+  return new Set(ids.filter((value): value is string => typeof value === "string"));
 }
 
-export function serializeActiveButtonIds(ids: Set<string> | string[]): string {
-  return JSON.stringify(Array.from(ids));
+/** Converts a set of button IDs back into the plain string array Workshop's array parameters expect. */
+export function activeButtonIdsToArray(ids: Set<string> | string[]): string[] {
+  return Array.from(ids);
 }
 
 /**
  * Filters out hidden buttons and merges the force-disabled overlay onto the remainder, without
- * mutating the input array or any button config object. Applies `hiddenButtonIdsJson` /
- * `disabledButtonIdsJson` (parsed via `parseButtonIdSetJson`) on top of the buttons already
+ * mutating the input array or any button config object. Applies `hiddenButtonIdsArray` /
+ * `disabledButtonIdsArray` (converted via `toButtonIdSet`) on top of the buttons already
  * resolved from `buttonsJson`: a hidden id is dropped entirely (as if removed from
  * `buttonsJson`), a disabled id is force-disabled in addition to whatever its own `disabled`
  * field already said.
@@ -588,20 +577,20 @@ export function applyButtonVisibilityAndDisabled(
 }
 
 /**
- * Computes the initial active-button-id set from `activeButtonIdsJson` (if present and valid)
- * or from each switch button's `defaultActive` flag otherwise, restricted to known switch buttons.
+ * Computes the initial active-button-id set from `activeButtonIdsJson` (the array parameter; if
+ * present, even an empty array) or from each switch button's `defaultActive` flag otherwise
+ * (when the parameter is `undefined`, i.e. never configured), restricted to known switch buttons.
  */
 export function computeInitialActiveButtonIds(
   buttons: ResolvedButtonConfig[],
-  activeButtonIdsJson: string | undefined,
+  activeButtonIds: readonly string[] | undefined,
 ): Set<string> {
   const switchIds = new Set(buttons.filter((b) => b.mode === "switch").map((b) => b.id));
-  const parsed = parseButtonIdSetJson(activeButtonIdsJson);
 
-  if (activeButtonIdsJson !== undefined && activeButtonIdsJson.trim().length > 0) {
+  if (activeButtonIds !== undefined) {
     // Only keep IDs that refer to known switch buttons; ignore unknown IDs.
     const reconciled = new Set<string>();
-    parsed.forEach((id) => {
+    activeButtonIds.forEach((id) => {
       if (switchIds.has(id)) {
         reconciled.add(id);
       }

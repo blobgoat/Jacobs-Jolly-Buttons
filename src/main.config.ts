@@ -113,20 +113,22 @@ export default defineConfig({
       displayName: "Disabled",
       type: "boolean",
     },
-    disabledButtonIdsJson: {
-      displayName: 'Force-disabled button IDs (JSON array of id strings, e.g. ["save"]).',
-      type: "string",
+    disabledButtonIdsArray: {
+      displayName: 'Force-disabled button IDs',
+      type: "array",
+      subType: "string",
     },
     infoOnDisabledButtonIds: {
       displayName:
-        "Info: disabledButtonIdsJson combines with each button's own \"disabled\" field; " +
+        "Info: disabledButtonIdsArray combines with each button's own \"disabled\" field; " +
         "never re-enables.",
       type: "boolean",
     },
-    hiddenButtonIdsJson: {
+    hiddenButtonIdsArray: {
       displayName:
-        'Hidden button IDs (JSON array of id strings, e.g. ["archive"]). Not rendered at all.',
-      type: "string",
+        'Hidden button IDs. Not rendered but states are saved though.',
+      type: "array",
+      subType: "string",
     },
     infoOnHiddenButtonIds: {
       displayName:
@@ -140,7 +142,7 @@ export default defineConfig({
       type: "string",
     },
     lastButtonInteraction: {
-      displayName: "Last button interaction (hover | press | change)",
+      displayName: "Last button interaction (hover | hoverEnd | press | change)",
       type: "string",
     },
     lastButtonActive: {
@@ -148,13 +150,18 @@ export default defineConfig({
       type: "boolean",
     },
     activeButtonIdsJson: {
-      displayName: "Active button IDs (JSON)",
-      type: "string",
+      displayName: "Active button IDs",
+      type: "array",
+      subType: "string",  // can be "string", "number", "boolean", "date", or "timestamp"
     },
   },
   events: {
     buttonHovered: {
       displayName: "Button hovered",
+      parameterUpdateIds: ["lastButtonId", "lastButtonInteraction", "lastButtonActive"],
+    },
+    buttonHoverEnded: {
+      displayName: "Button hover ended",
       parameterUpdateIds: ["lastButtonId", "lastButtonInteraction", "lastButtonActive"],
     },
     buttonPressed: {

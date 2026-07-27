@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeButtonIdsToArray,
   applyButtonVisibilityAndDisabled,
   autoQuoteJsonIdentifiers,
+  computeInitialActiveButtonIds,
   computeJoinedCornerRadii,
   computeEffectiveInteractiveMargins,
   DEFAULT_BUTTON_CONFIG,
   DEFAULT_GROUP_CONFIG,
   INVALID_JSON_MESSAGE,
-  parseButtonIdSetJson,
   parseButtonsJson,
   parseGroupConfig,
   resolvePxValue,
+  toButtonIdSet,
 } from "../buttonWidget.utils.js";
 import type { ResolvedButtonConfig } from "../buttonWidget.types.js";
 
@@ -187,7 +189,7 @@ describe("autoQuoteJsonIdentifiers", () => {
     ]);
   });
 
-  it("quotes bare words in a flat array (activeButtonIdsJson-style)", () => {
+  it("quotes bare words in a flat array (a hand-typed id-list style)", () => {
     const fixed = autoQuoteJsonIdentifiers("[run, layer]");
     expect(JSON.parse(fixed)).toEqual(["run", "layer"]);
   });
@@ -220,22 +222,55 @@ describe("parseButtonsJson (unquoted-JSON fallback)", () => {
   });
 });
 
-describe("parseButtonIdSetJson", () => {
-  it("parses a strict JSON array of ids", () => {
-    expect(parseButtonIdSetJson(JSON.stringify(["a", "b"]))).toEqual(new Set(["a", "b"]));
+describe("toButtonIdSet", () => {
+  it("converts a plain string array into a set", () => {
+    expect(toButtonIdSet(["a", "b"])).toEqual(new Set(["a", "b"]));
   });
 
-  it("recovers unquoted ids via the same auto-quote fallback", () => {
-    expect(parseButtonIdSetJson("[run, layer]")).toEqual(new Set(["run", "layer"]));
+  it("drops non-string entries defensively", () => {
+    expect(toButtonIdSet(["a", 1, null, "b", undefined] as unknown[])).toEqual(new Set(["a", "b"]));
   });
 
-  it("returns an empty set for input that is invalid even after the repair attempt", () => {
-    expect(parseButtonIdSetJson("{ not : : an array")).toEqual(new Set());
+  it("returns an empty set for undefined or a non-array value", () => {
+    expect(toButtonIdSet(undefined)).toEqual(new Set());
+    expect(toButtonIdSet("not-an-array" as unknown as unknown[])).toEqual(new Set());
   });
 
-  it("returns an empty set for undefined or blank input", () => {
-    expect(parseButtonIdSetJson(undefined)).toEqual(new Set());
-    expect(parseButtonIdSetJson("")).toEqual(new Set());
+  it("returns an empty set for an empty array", () => {
+    expect(toButtonIdSet([])).toEqual(new Set());
+  });
+});
+
+describe("activeButtonIdsToArray", () => {
+  it("converts a Set into a plain array", () => {
+    expect(activeButtonIdsToArray(new Set(["a", "b"]))).toEqual(["a", "b"]);
+  });
+
+  it("passes an array through unchanged (as a new array)", () => {
+    expect(activeButtonIdsToArray(["a", "b"])).toEqual(["a", "b"]);
+  });
+});
+
+describe("computeInitialActiveButtonIds", () => {
+  const buttons = [
+    makeResolvedButton({ id: "run", mode: "momentary" }),
+    makeResolvedButton({ id: "layer", mode: "switch", defaultActive: true }),
+    makeResolvedButton({ id: "grid", mode: "switch", defaultActive: false }),
+  ];
+
+  it("falls back to each switch's defaultActive when the parameter is undefined (never configured)", () => {
+    expect(computeInitialActiveButtonIds(buttons, undefined)).toEqual(new Set(["layer"]));
+  });
+
+  it("uses the explicitly provided array instead of defaultActive, even when empty", () => {
+    expect(computeInitialActiveButtonIds(buttons, [])).toEqual(new Set());
+    expect(computeInitialActiveButtonIds(buttons, ["grid"])).toEqual(new Set(["grid"]));
+  });
+
+  it("ignores ids that don't refer to a known switch button", () => {
+    expect(computeInitialActiveButtonIds(buttons, ["run", "unknown-id", "layer"])).toEqual(
+      new Set(["layer"]),
+    );
   });
 });
 

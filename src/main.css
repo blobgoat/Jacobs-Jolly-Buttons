@@ -1,5 +1,12 @@
 html, body {
     margin: 0;
+    /* The widget's own containers (Widget.tsx's root Flex, PalantirButtonGroup's row) already
+       set overflow-y: hidden with a reserved padding buffer so hover/press animations never
+       need to scroll internally. But that only has an effect if this page itself doesn't also
+       grow a scrollbar around everything — without this, the browser's default page-level
+       vertical scrollbar could still appear (e.g. in the local dev preview, which has no
+       Workshop-provided fixed-height container), which is the "scrolling" this is meant to stop. */
+    overflow-y: hidden;
 }
 
 .radix-themes:where([data-is-root-theme='true']) {

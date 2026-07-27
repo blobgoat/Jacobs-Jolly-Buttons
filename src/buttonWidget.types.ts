@@ -10,7 +10,7 @@ export type BackgroundImageFit = "cover" | "contain" | "fill";
 
 export type LayoutMode = "joined" | "space-between" | "custom-gap";
 
-export type ButtonInteraction = "hover" | "press" | "change";
+export type ButtonInteraction = "hover" | "hoverEnd" | "press" | "change";
 
 /** Position of a button within a visually joined chain of buttons. */
 export type JoinedPosition = "single" | "first" | "middle" | "last";
@@ -117,6 +117,7 @@ export interface ResolvedGroupConfig {
 /** Internal event emitted by a button up to the group, and by the group up to Widget.tsx. */
 export type InternalButtonEvent =
   | { type: "hover"; id: string; active: boolean }
+  | { type: "hoverEnd"; id: string; active: boolean }
   | { type: "press"; id: string; active: boolean }
   | { type: "change"; id: string; active: boolean };
 

@@ -6,6 +6,7 @@ import {
   computeJoinedCornerRadii,
   computeShadows,
   HOVER_SCALE,
+  ShadowSet,
 } from "../buttonWidget.utils.js";
 
 type VisualState = "disabled" | "pressed" | "activeHovered" | "active" | "hovered" | "default";
@@ -24,24 +25,48 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   joinedPosition,
   onEvent,
 }) => {
-  const isDisabled = groupDisabled || config.disabled;
-  const effectiveActive = config.mode === "switch" ? active : false;
+  const isDisabled: boolean = groupDisabled || config.disabled;
+  const propActive: boolean = config.mode === "switch" ? active : false;
 
-  const [isHovered, setIsHovered] = useState(false);
-  const [isPointerDown, setIsPointerDown] = useState(false);
-  const [isKeyboardPressed, setIsKeyboardPressed] = useState(false);
+  // A switch's `active` prop only updates once this click's "change" event has round-tripped
+  // back through the host (Widget.tsx's state, then a re-render with the new `active` value) —
+  // that's at least one extra render after pointerup. Without this, isPointerDown already flips
+  // to false on pointerup (browsers fire pointerup/mouseup before click), so for one render the
+  // button has neither a live press nor the not-yet-arrived active state, and it visibly springs
+  // back up before immediately being pushed back down once `active` catches up. `pendingActive`
+  // holds the click's known outcome locally so the pressed-down look never has a gap to spring
+  // through; it's cleared once the prop confirms the same value.
+  const [pendingActive, setPendingActive]: [boolean | null, React.Dispatch<React.SetStateAction<boolean | null>>] =
+    useState<boolean | null>(null);
 
-  const hasEmittedHoverRef = useRef(false);
+  useEffect(() => {
+    if (pendingActive !== null && propActive === pendingActive) {
+      setPendingActive(null);
+    }
+  }, [propActive, pendingActive]);
+
+  const effectiveActive: boolean = pendingActive !== null ? pendingActive : propActive;
+
+  const [isHovered, setIsHovered]: [boolean, React.Dispatch<React.SetStateAction<boolean>>] = useState(false);
+  const [isPointerDown, setIsPointerDown]: [boolean, React.Dispatch<React.SetStateAction<boolean>>] = useState(false);
+  const [isKeyboardPressed, setIsKeyboardPressed]: [boolean, React.Dispatch<React.SetStateAction<boolean>>] = useState(false);
+
+  //tracks the hover reference, or the object that was last hovered over, ensuring hovering doesnt emit multiple hover events
+  const hasEmittedHoverRef: React.MutableRefObject<boolean> = useRef(false);
 
   useEffect(() => {
     if (isDisabled) {
       setIsHovered(false);
       setIsPointerDown(false);
       setIsKeyboardPressed(false);
+      setPendingActive(null);
       hasEmittedHoverRef.current = false;
     }
   }, [isDisabled]);
 
+  /**
+   * Handles the pointer entering the button. Sets the hover state and emits a hover event if it hasn't been emitted yet.
+   */
   const handlePointerEnter = useCallback(() => {
     if (isDisabled) {
       return;
@@ -52,24 +77,41 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       onEvent({ type: "hover", id: config.id, active: effectiveActive });
     }
   }, [isDisabled, onEvent, config.id, effectiveActive]);
-
-  const handlePointerLeave = useCallback(() => {
+  /**
+   * Handles the pointer leaving the button. Resets the hover and pointer down states, marks that
+   * a hover event can be emitted again, and — only if a "hover" event was actually emitted for
+   * this hover (i.e. the button wasn't disabled the whole time) — emits a matching "hoverEnd"
+   * event so hosts can react to hover ending, not just starting.
+   */
+  const handlePointerLeave: () => void = useCallback(() => {
     setIsHovered(false);
     setIsPointerDown(false);
-    hasEmittedHoverRef.current = false;
-  }, []);
-
-  const handlePointerDown = useCallback(() => {
+    if (hasEmittedHoverRef.current) {
+      hasEmittedHoverRef.current = false;
+      onEvent({ type: "hoverEnd", id: config.id, active: effectiveActive });
+    }
+  }, [onEvent, config.id, effectiveActive]);
+  /**
+   * Handles the pointer down event on the button. Sets the pointer down state if the button is not disabled.
+   */
+  const handlePointerDown: () => void = useCallback(() => {
     if (isDisabled) {
       return;
     }
     setIsPointerDown(true);
   }, [isDisabled]);
 
-  const endPointerPress = useCallback(() => {
+  /**
+   * Ends the pointer press by resetting the pointer down state.
+   */
+  const endPointerPress: () => void = useCallback(() => {
     setIsPointerDown(false);
   }, []);
 
+  /**
+   * This is a listener watching for pointer up and pointer cancel events on the window to reset the pointer down state.
+   * This ensures that the button correctly reflects the pointer state even if the pointer is released outside the button.
+   */
   useEffect(() => {
     if (!isPointerDown) {
       return;
@@ -83,11 +125,16 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     };
   }, [isPointerDown]);
 
-  const handleBlur = useCallback(() => {
+  /**
+   * Handles the blur event on the button, resetting the keyboard pressed state.
+   */
+  const handleBlur: () => void = useCallback(() => {
     setIsKeyboardPressed(false);
   }, []);
-
-  const handleKeyDown = useCallback(
+  /**
+   * Handles the key down event for the button, mainly for accessibility purposes, so that pressing Enter or Space triggers the button action.
+   */
+  const handleKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>) => {
       if (isDisabled) {
         return;
@@ -99,21 +146,29 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     [isDisabled],
   );
 
-  const handleKeyUp = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+  /**
+   * Handles the key up event for the button, mainly for accessibility purposes, so that releasing Enter or Space resets the keyboard pressed state.
+   */
+  const handleKeyUp: (event: React.KeyboardEvent<HTMLButtonElement>) => void = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
       setIsKeyboardPressed(false);
     }
   }, []);
 
-  // Activation relies on the native `click` event, which the browser (and
-  // @testing-library/user-event) only fires when a pointer press begins and ends inside the
-  // same interactive element, or when Enter/Space is used on a focused button.
-  const handleClick = useCallback(() => {
+
+  /**
+   * Handles the click event for the button, triggering the appropriate press and change events based on the button's mode and active state.
+   */
+  const handleClick: () => void = useCallback(() => {
     if (isDisabled) {
       return;
     }
     if (config.mode === "switch") {
       const newActive = !active;
+      // Set synchronously, in the same tick as the events below, so the very next render already
+      // reflects the switch's outcome instead of waiting for it to round-trip back through the
+      // host as an updated `active` prop — see the comment on `pendingActive`'s declaration.
+      setPendingActive(newActive);
       onEvent({ type: "press", id: config.id, active: newActive });
       onEvent({ type: "change", id: config.id, active: newActive });
     } else {
@@ -121,11 +176,55 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     }
   }, [isDisabled, config.mode, config.id, active, onEvent]);
 
-  const handleIconError = useCallback(() => {
-    console.warn(`[PalantirButton] Icon failed to load for button "${config.id}".`);
-  }, [config.id]);
+  // The icon is fetched (rather than set directly as an <img src>) so the request carries the
+  // browser's auth cookies via `credentials: "include"` — a plain <img src="..."> never sends
+  // credentials for a cross-origin (or credentialed same-origin) URL, so a protected icon would
+  // silently fail to render. The fetched bytes are turned into a local blob: URL for the <img>.
+  const [iconObjectUrl, setIconObjectUrl]: [string | null, React.Dispatch<React.SetStateAction<string | null>>] =
+    useState<string | null>(null);
 
-  const pressedVisual = !isDisabled && ((isPointerDown && isHovered) || isKeyboardPressed);
+  useEffect(() => {
+    if (!config.iconSrc) {
+      setIconObjectUrl(null);
+      return;
+    }
+
+    let objectUrl: string | null = null;
+    let cancelled = false;
+
+    fetch(config.iconSrc, { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Failed to load icon (status ${res.status})`);
+        }
+        return res.blob();
+      })
+      .then((blob) => {
+        if (cancelled) {
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setIconObjectUrl(objectUrl);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setIconObjectUrl(null);
+        console.warn(`[PalantirButton] Icon failed to load for button "${config.id}".`);
+      });
+
+    // Revoke the specific blob: URL created by *this* effect run (not whatever is in state),
+    // so switching iconSrc rapidly can't revoke a URL a later run is still using.
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [config.iconSrc, config.id]);
+
+  const pressedVisual: boolean = !isDisabled && ((isPointerDown && isHovered) || isKeyboardPressed);
 
   // A switch that's active should stay visually "pushed in" (translated down, sunken shadow),
   // not just spring back up to a raised/resting shape with a darker color once the pointer or
@@ -133,7 +232,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   // press. `pressedVisual` alone still covers that momentary case (including the tactile feel of
   // pressing an active switch to toggle it back off); this adds the persistent "stays down"
   // look for a switch that is currently active.
-  const isHeldDown = pressedVisual || (config.mode === "switch" && effectiveActive);
+  const isHeldDown: boolean = pressedVisual || (config.mode === "switch" && effectiveActive);
 
   const visualState: VisualState = isDisabled
     ? "disabled"
@@ -147,7 +246,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
             ? "hovered"
             : "default";
 
-  const { backgroundColor: stateBackgroundColor, textColor: stateTextColor } = useMemo(() => {
+  const { backgroundColor: stateBackgroundColor, textColor: stateTextColor }: { backgroundColor: string; textColor: string } = useMemo(() => {
     if (isDisabled) {
       return {
         backgroundColor: config.disabledBackgroundColor,
@@ -166,9 +265,9 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     return { backgroundColor: config.backgroundColor, textColor: config.textColor };
   }, [isDisabled, pressedVisual, effectiveActive, isHovered, config]);
 
-  const shadows = useMemo(() => computeShadows(config.shadowCoefficient), [config.shadowCoefficient]);
+  const shadows: ShadowSet = useMemo<ShadowSet>(() => computeShadows(config.shadowCoefficient), [config.shadowCoefficient]);
 
-  const currentShadow = isDisabled
+  const currentShadow: string = isDisabled
     ? "none"
     : isHeldDown
       ? shadows.pressed
@@ -176,15 +275,15 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
         ? shadows.hover
         : shadows.resting;
 
-  const radiusPx = useMemo(
+  const radiusPx: number = useMemo(
     () => computeBorderRadiusPx(buttonHeightPx, config.roundingCoefficient),
     [buttonHeightPx, config.roundingCoefficient],
   );
-  const radii = useMemo(
+  const radii: { topLeft: number; topRight: number; bottomRight: number; bottomLeft: number } = useMemo(
     () => computeJoinedCornerRadii(radiusPx, joinedPosition),
     [radiusPx, joinedPosition],
   );
-  const margins = useMemo(
+  const margins: { top: number; right: number; bottom: number; left: number } = useMemo(
     () =>
       computeEffectiveInteractiveMargins(
         config.interactiveMarginX,
@@ -194,9 +293,9 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     [config.interactiveMarginX, config.interactiveMarginY, joinedPosition],
   );
 
-  const hasBackgroundImage = !!config.backgroundImageSrc;
+  const hasBackgroundImage: boolean = !!config.backgroundImageSrc;
 
-  const overlayColor = useMemo(() => {
+  const overlayColor: string | null = useMemo(() => {
     if (!hasBackgroundImage) {
       return null;
     }
@@ -219,13 +318,12 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     config.backgroundImageFit === "fill" ? "100% 100%" : config.backgroundImageFit;
 
   const iconSizePx = Math.round(buttonHeightPx * 0.6);
-  const hasIcon = !!config.iconSrc;
+  const hasIcon = !!iconObjectUrl;
 
   const iconNode = hasIcon ? (
     <img
-      src={config.iconSrc}
+      src={iconObjectUrl}
       alt={config.iconAlt ?? ""}
-      onError={handleIconError}
       draggable={false}
       style={{
         width: iconSizePx,
