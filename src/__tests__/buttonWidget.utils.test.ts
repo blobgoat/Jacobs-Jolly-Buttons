@@ -11,6 +11,7 @@ import {
   INVALID_JSON_MESSAGE,
   parseButtonsJson,
   parseGroupConfig,
+  parseMediaSetItemUrl,
   resolvePxValue,
   toButtonIdSet,
 } from "../buttonWidget.utils.js";
@@ -238,6 +239,41 @@ describe("toButtonIdSet", () => {
 
   it("returns an empty set for an empty array", () => {
     expect(toButtonIdSet([])).toEqual(new Set());
+  });
+});
+
+describe("parseMediaSetItemUrl", () => {
+  it("extracts the media set and media item RIDs from a full media-set item URL", () => {
+    expect(
+      parseMediaSetItemUrl(
+        "https://blobfishmaster.usw-18.palantirfoundry.com/mio/api/media-set/ri.mio.main.media-set.265c6711-b0b9-4cdf-a1f8-ed3687e0ba14/items/ri.mio.main.media-item.019f80de-7362-745e-b4f5-ec047ccea69d",
+      ),
+    ).toEqual({
+      mediaSetRid: "ri.mio.main.media-set.265c6711-b0b9-4cdf-a1f8-ed3687e0ba14",
+      mediaItemRid: "ri.mio.main.media-item.019f80de-7362-745e-b4f5-ec047ccea69d",
+    });
+  });
+
+  it("still matches with a trailing path segment, e.g. /content", () => {
+    expect(parseMediaSetItemUrl("https://host/v2/mediasets/media-set/set-1/items/item-1/content")).toEqual({
+      mediaSetRid: "set-1",
+      mediaItemRid: "item-1",
+    });
+  });
+
+  it("still matches with a trailing query string", () => {
+    expect(parseMediaSetItemUrl("https://host/media-set/set-1/items/item-1?token=abc")).toEqual({
+      mediaSetRid: "set-1",
+      mediaItemRid: "item-1",
+    });
+  });
+
+  it("returns null for a plain, non-media-set URL", () => {
+    expect(parseMediaSetItemUrl("https://example.com/icons/star.svg")).toBeNull();
+  });
+
+  it("returns null for a relative path with no media-set segment", () => {
+    expect(parseMediaSetItemUrl("/icon.svg")).toBeNull();
   });
 });
 

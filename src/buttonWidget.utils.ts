@@ -559,6 +559,27 @@ export function activeButtonIdsToArray(ids: Set<string> | string[]): string[] {
 }
 
 /**
+ * Extracts the media set / media item RIDs from a Foundry media-set item URL, e.g.
+ * `.../media-set/{mediaSetRid}/items/{mediaItemRid}` (with or without a trailing path segment
+ * like `/content`, and regardless of host or query string). Foundry's custom-widget iframe runs
+ * without the parent stack's session cookies, so a plain `fetch(url, { credentials: "include" })`
+ * against a pasted media URL can't authenticate — the RIDs parsed here are instead handed to the
+ * OSDK `read()` platform function (via the widget's own authenticated client), which resolves
+ * and signs the actual authenticated request itself. Returns `null` for any URL that isn't a
+ * recognizable media-set item URL (e.g. a plain public image URL), so callers can fall back to a
+ * normal fetch for those.
+ */
+export function parseMediaSetItemUrl(
+  url: string,
+): { mediaSetRid: string; mediaItemRid: string } | null {
+  const match = url.match(/\/media-set\/([^/?#]+)\/items\/([^/?#]+)/);
+  if (!match) {
+    return null;
+  }
+  return { mediaSetRid: match[1], mediaItemRid: match[2] };
+}
+
+/**
  * Filters out hidden buttons and merges the force-disabled overlay onto the remainder, without
  * mutating the input array or any button config object. Applies `hiddenButtonIdsArray` /
  * `disabledButtonIdsArray` (converted via `toButtonIdSet`) on top of the buttons already

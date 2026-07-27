@@ -1,7 +1,7 @@
 {
   "name": "custom-basic-widgets",
   "private": true,
-  "version": "0.0.7",
+  "version": "0.0.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,6 +13,7 @@
   "dependencies": {
     "@custom-widget/sdk": "latest",
     "@osdk/client": "^2.0.0",
+    "@osdk/foundry.mediasets": "^2.69.0",
     "@osdk/react": "^2.0.0",
     "@osdk/widget.client": "^3.26.0",
     "@osdk/widget.client-react": "^3.26.0",

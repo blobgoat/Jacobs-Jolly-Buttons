@@ -1,8 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { MediaSets } from "@osdk/foundry.mediasets";
 import { PalantirButton } from "../components/PalantirButton.js";
 import type { InternalButtonEvent, ResolvedButtonConfig } from "../buttonWidget.types.js";
+
+// The real client.ts constructs an OSDK client from `@custom-widget/sdk`'s generated ontology
+// RID, which isn't meaningful in a unit test. PalantirButton only ever passes this straight
+// through to MediaSets.read as an opaque `$ctx`, which is itself mocked below, so a stand-in
+// object is enough.
+vi.mock("../client.js", () => ({ client: {} }));
+vi.mock("@osdk/foundry.mediasets", () => ({
+  MediaSets: { read: vi.fn() },
+}));
 
 const BASE_CONFIG: ResolvedButtonConfig = {
   id: "test-button",
@@ -354,5 +364,43 @@ describe("PalantirButton interactive margin / hit area", () => {
 
     fetchSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it("routes a Foundry media-set item URL through MediaSets.read instead of a plain fetch", async () => {
+    // The widget iframe doesn't carry the parent stack's session cookies, so a Foundry-hosted
+    // media-set image can't authenticate via a plain credentialed fetch — it has to go through
+    // the OSDK client instead. See parseMediaSetItemUrl in buttonWidget.utils.ts.
+    const mockBlob = new Blob(["fake-png"], { type: "image/png" });
+    const readMock = vi
+      .mocked(MediaSets.read)
+      .mockResolvedValue({ ok: true, blob: () => Promise.resolve(mockBlob) } as Response);
+    const fetchSpy = vi.spyOn(global, "fetch");
+
+    const mediaUrl =
+      "https://blobfishmaster.usw-18.palantirfoundry.com/mio/api/media-set/ri.mio.main.media-set.265c6711-b0b9-4cdf-a1f8-ed3687e0ba14/items/ri.mio.main.media-item.019f80de-7362-745e-b4f5-ec047ccea69d";
+
+    const { container } = render(
+      <PalantirButton
+        config={{ ...BASE_CONFIG, iconSrc: mediaUrl }}
+        active={false}
+        groupDisabled={false}
+        buttonHeightPx={40}
+        joinedPosition="single"
+        onEvent={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("img")).not.toBeNull();
+    });
+    expect(readMock).toHaveBeenCalledWith(
+      {},
+      "ri.mio.main.media-set.265c6711-b0b9-4cdf-a1f8-ed3687e0ba14",
+      "ri.mio.main.media-item.019f80de-7362-745e-b4f5-ec047ccea69d",
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    readMock.mockRestore();
+    fetchSpy.mockRestore();
   });
 });

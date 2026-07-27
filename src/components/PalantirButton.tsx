@@ -1,4 +1,7 @@
+import { MediaSets } from "@osdk/foundry.mediasets";
+//npm i -S @osdk/foundry.mediasets' to add it
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { client } from "../client.js";
 import type { PalantirButtonProps } from "../buttonWidget.types.js";
 import {
   computeBorderRadiusPx,
@@ -6,6 +9,7 @@ import {
   computeJoinedCornerRadii,
   computeShadows,
   HOVER_SCALE,
+  parseMediaSetItemUrl,
   ShadowSet,
 } from "../buttonWidget.utils.js";
 
@@ -218,10 +222,15 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     commitActivation();
   }, [commitActivation]);
 
-  // The icon is fetched (rather than set directly as an <img src>) so the request carries the
-  // browser's auth cookies via `credentials: "include"` — a plain <img src="..."> never sends
-  // credentials for a cross-origin (or credentialed same-origin) URL, so a protected icon would
-  // silently fail to render. The fetched bytes are turned into a local blob: URL for the <img>.
+  // The icon is fetched (rather than set directly as an <img src>) and turned into a local
+  // blob: URL for the <img>, rather than pointing the <img> straight at iconSrc, because the
+  // custom-widget iframe doesn't share the parent Foundry stack's session cookies — a plain
+  // `<img src="...">` (or an uncredentialed fetch) against a Foundry-hosted image silently fails
+  // to authenticate. When iconSrc is a Foundry media-set item URL (…/media-set/{rid}/items/{rid}),
+  // the RIDs are parsed out and handed to the OSDK `read()` platform function, which authenticates
+  // through the widget's own client (see client.ts) instead of the browser's cookie jar. Any URL
+  // that doesn't match that shape (e.g. a plain public image URL) falls back to a normal
+  // credentialed fetch.
   const [iconObjectUrl, setIconObjectUrl]: [string | null, React.Dispatch<React.SetStateAction<string | null>>] =
     useState<string | null>(null);
 
@@ -234,7 +243,12 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     let objectUrl: string | null = null;
     let cancelled = false;
 
-    fetch(config.iconSrc, { credentials: "include" })
+    const mediaItem = parseMediaSetItemUrl(config.iconSrc);
+    const responsePromise: Promise<Response> = mediaItem
+      ? MediaSets.read(client, mediaItem.mediaSetRid, mediaItem.mediaItemRid)
+      : fetch(config.iconSrc, { credentials: "include" });
+
+    responsePromise
       .then((res) => {
         if (!res.ok) {
           throw new Error(`Failed to load icon (status ${res.status})`);
@@ -248,12 +262,12 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
         objectUrl = URL.createObjectURL(blob);
         setIconObjectUrl(objectUrl);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) {
           return;
         }
         setIconObjectUrl(null);
-        console.warn(`[PalantirButton] Icon failed to load for button "${config.id}".`);
+        console.warn(`[PalantirButton] Icon failed to load for button "${config.id}".`, error);
       });
 
     // Revoke the specific blob: URL created by *this* effect run (not whatever is in state),
@@ -433,17 +447,15 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     borderBottomLeftRadius: radii.bottomLeft,
     overflow: "hidden",
     backgroundColor: hasBackgroundImage ? undefined : stateBackgroundColor,
-    backgroundImage: hasBackgroundImage
-      ? overlayColor
-        ? `linear-gradient(${overlayColor}, ${overlayColor}), url(${config.backgroundImageSrc})`
-        : `url(${config.backgroundImageSrc})`
-      : undefined,
-    backgroundSize: hasBackgroundImage
-      ? overlayColor
-        ? `100% 100%, ${backgroundSizeForFit}`
-        : backgroundSizeForFit
-      : undefined,
-    backgroundPosition: hasBackgroundImage ? (overlayColor ? "center, center" : "center") : undefined,
+    // Kept stable across visual states — the overlay that used to be baked in here as a second
+    // linear-gradient layer (recomputing this string on every hover/press) is now its own
+    // absolutely positioned <span> below. That keeps this exact background-image string identical
+    // between renders, so the browser never treats it as a new image: an animated image (GIF/APNG)
+    // keeps playing instead of restarting, and there's no flash while the gradient layer swaps in
+    // and out.
+    backgroundImage: hasBackgroundImage ? `url(${config.backgroundImageSrc})` : undefined,
+    backgroundSize: hasBackgroundImage ? backgroundSizeForFit : undefined,
+    backgroundPosition: hasBackgroundImage ? "center" : undefined,
     backgroundRepeat: hasBackgroundImage ? "no-repeat" : undefined,
     color: stateTextColor,
     fontSize: config.fontSizePx,
@@ -451,11 +463,29 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     boxShadow: currentShadow,
     transform: `${pressTranslateTransform} ${hoverScaleTransform}`,
     transformOrigin: "center center",
-    transition: "transform 120ms ease-out, box-shadow 120ms ease-out",
+    transition: [
+      "transform 120ms ease-out",
+      "box-shadow 120ms ease-out",
+      "background-color 120ms ease-out",
+      "color 120ms ease-out",
+    ].join(", "),
     whiteSpace: "nowrap",
   };
 
+  // The state overlay for a background-image button now lives in its own layer instead of being
+  // baked into visualSurfaceStyle's backgroundImage (see the comment there) — this div just
+  // fades its own background-color, which is cheap and never disturbs the image underneath.
+  const overlayStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    backgroundColor: overlayColor ?? "transparent",
+    transition: "background-color 120ms ease-out",
+    pointerEvents: "none",
+  };
+
   const contentStyle: React.CSSProperties = {
+    position: "relative",
+    zIndex: 1,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -485,6 +515,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       onClick={handleClick}
     >
       <span className="palantir-button-visual-surface" style={visualSurfaceStyle}>
+        {hasBackgroundImage && <span aria-hidden="true" style={overlayStyle} />}
         <span style={contentStyle}>{contentChildren}</span>
       </span>
     </button>
