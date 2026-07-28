@@ -23,3 +23,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Project-specific Foundry wiring (stack hostname, widget set RID). These identify one specific
+# Foundry project/widget set, so they shouldn't be committed or shared as-is — copy the matching
+# .example file and fill in your own values instead (see README.md).
+.npmrc
+foundry.config.json
+
+# Generated widget manifest (produced by `npm run build` / the @osdk/widget.vite-plugin).
+.palantir/

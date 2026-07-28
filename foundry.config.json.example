@@ -1,0 +1,10 @@
+{
+  "foundryUrl": "https://<your-stack-hostname>",
+  "widgetSet": {
+    "rid": "<your-widget-set-rid>",
+    "directory": "./dist",
+    "autoVersion": {
+      "type": "package-json"
+    }
+  }
+}

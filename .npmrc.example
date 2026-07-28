@@ -1,0 +1,2 @@
+//<your-stack-hostname>/artifacts/api/:_authToken=${FOUNDRY_TOKEN}
+@custom-widget:registry=https://<your-stack-hostname>/artifacts/api/repositories/<your-widget-set-rid>/contents/release/npm/
