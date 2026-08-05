@@ -30,6 +30,7 @@ function setContext(overrides: {
         customGapPx: 8,
         groupPaddingPx: 0,
         buttonHeightPx: 40,
+        buttonVerticalPaddingPx: 0,
         disabled: false,
         disabledButtonIdsArray: [],
         hiddenButtonIdsArray: [],
@@ -156,6 +157,42 @@ describe("Widget Foundry event wiring", () => {
     });
   });
 
+  it("emits buttonPressed (not buttonUnpressed) when a switch becomes selected", async () => {
+    const emitEvent = setContext({});
+    render(<Widget />);
+    const button = screen.getByRole("button", { name: "Layer" });
+    const user = userEvent.setup();
+    await user.click(button);
+
+    expect(emitEvent).toHaveBeenCalledWith("buttonPressed", {
+      parameterUpdates: {
+        lastButtonId: "layer",
+        lastButtonInteraction: "press",
+        lastButtonActive: true,
+      },
+    });
+    expect(emitEvent).not.toHaveBeenCalledWith("buttonUnpressed", expect.anything());
+  });
+
+  it("emits buttonUnpressed (not a second buttonPressed) when a switch becomes deselected", async () => {
+    const emitEvent = setContext({});
+    render(<Widget />);
+    const button = screen.getByRole("button", { name: "Layer" });
+    const user = userEvent.setup();
+    await user.click(button); // select
+    emitEvent.mockClear();
+    await user.click(button); // deselect
+
+    expect(emitEvent).toHaveBeenCalledWith("buttonUnpressed", {
+      parameterUpdates: {
+        lastButtonId: "layer",
+        lastButtonInteraction: "unpress",
+        lastButtonActive: false,
+      },
+    });
+    expect(emitEvent).not.toHaveBeenCalledWith("buttonPressed", expect.anything());
+  });
+
   it("shows the invalid-JSON message for malformed buttonsJson", () => {
     setContext({ values: { buttonsJson: "{ not json" } });
     render(<Widget />);
@@ -245,6 +282,77 @@ describe("Widget Foundry event wiring", () => {
   });
 });
 
+describe("Widget responsive layout", () => {
+  beforeEach(() => {
+    mockedUseWidgetContext.mockReset();
+  });
+
+  it("threads buttonVerticalPaddingPx from parameters down to each button's layout wrapper", () => {
+    setContext({ values: { buttonVerticalPaddingPx: 12 } });
+    const { container } = render(<Widget />);
+    const wrappers = container.querySelectorAll<HTMLElement>('[data-testid="button-layout-wrapper"]');
+    expect(wrappers.length).toBeGreaterThan(0);
+    wrappers.forEach((wrapper) => {
+      expect(wrapper.style.paddingTop).toBe("12px");
+      expect(wrapper.style.paddingBottom).toBe("12px");
+    });
+  });
+
+  it("gives every button an equal-width flexible wrapper that fills the group", () => {
+    setContext({});
+    const { container } = render(<Widget />);
+    const wrappers = container.querySelectorAll<HTMLElement>('[data-testid="button-layout-wrapper"]');
+    expect(wrappers).toHaveLength(2);
+    wrappers.forEach((wrapper) => {
+      expect(wrapper.style.flex).toBe("1 1 0px");
+    });
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.width).toBe("100%");
+  });
+
+  it("auto-fills the available height when buttonHeightPx is never configured (undefined)", () => {
+    const values: Record<string, unknown> = {
+      buttonsJson: BUTTONS_JSON,
+      layoutMode: "custom-gap",
+      customGapPx: 8,
+      groupPaddingPx: 0,
+      buttonVerticalPaddingPx: 0,
+      disabled: false,
+      disabledButtonIdsArray: [],
+      hiddenButtonIdsArray: [],
+      lastButtonId: "",
+      lastButtonInteraction: "",
+      lastButtonActive: false,
+      activeButtonIdsJson: [],
+      // buttonHeightPx intentionally omitted — never configured.
+    };
+    mockedUseWidgetContext.mockReturnValue({
+      parameters: { state: "loaded", values },
+      emitEvent: vi.fn(),
+    } as unknown as ReturnType<typeof useWidgetContext>);
+    render(<Widget />);
+    screen.getAllByRole("button").forEach((button) => {
+      expect(button.style.height).toBe("100%");
+    });
+  });
+
+  it("auto-fills the available height when buttonHeightPx is negative", () => {
+    setContext({ values: { buttonHeightPx: -1 } });
+    render(<Widget />);
+    screen.getAllByRole("button").forEach((button) => {
+      expect(button.style.height).toBe("100%");
+    });
+  });
+
+  it("keeps the outer widget container sized to fill and center within the widget", () => {
+    setContext({});
+    const { container } = render(<Widget />);
+    const outer = container.firstElementChild?.firstElementChild as HTMLElement;
+    expect(outer.style.width).toBe("100%");
+    expect(outer.style.height).toBe("100%");
+  });
+});
+
 describe("Widget disabled propagation", () => {
   beforeEach(() => {
     mockedUseWidgetContext.mockReset();
@@ -255,6 +363,136 @@ describe("Widget disabled propagation", () => {
     render(<Widget />);
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Layer" })).toBeDisabled();
+  });
+});
+
+describe("Widget color/font-size/rounding/shadow schemes", () => {
+  beforeEach(() => {
+    mockedUseWidgetContext.mockReset();
+  });
+
+  it("keeps every button's own inline colors and font size by default (colorScheme/fontSizeScheme default to 'none')", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          { id: "run", label: "Run", mode: "momentary", backgroundColor: "#ff0000", fontSizePx: 18 },
+        ]),
+        // Configuring the schemes at all should have no effect on a button that never opts in.
+        primaryBackgroundColor: "#00ff00",
+        primaryFontSizePx: 30,
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.backgroundColor).toBe("rgb(255, 0, 0)");
+    expect(surface.style.fontSize).toBe("18px");
+  });
+
+  it("overrides a button's own inline colors and font size once it opts into a scheme", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          {
+            id: "run",
+            label: "Run",
+            mode: "momentary",
+            backgroundColor: "#ff0000",
+            fontSizePx: 10,
+            colorScheme: "primary",
+            fontSizeScheme: "primary",
+          },
+        ]),
+        primaryBackgroundColor: "#00ff00",
+        primaryFontSizePx: 20,
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.backgroundColor).toBe("rgb(0, 255, 0)");
+    expect(surface.style.fontSize).toBe("20px");
+  });
+
+  it("resolves a non-primary colorScheme (secondary) to that scheme's group-level colors", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          { id: "run", label: "Run", mode: "momentary", colorScheme: "secondary" },
+        ]),
+        secondaryBackgroundColor: "#0000ff",
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.backgroundColor).toBe("rgb(0, 0, 255)");
+  });
+
+  it("resolves colorScheme and fontSizeScheme independently through the full Widget pipeline", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          {
+            id: "run",
+            label: "Run",
+            mode: "momentary",
+            colorScheme: "secondary",
+            fontSizeScheme: "tertiary",
+          },
+        ]),
+        secondaryBackgroundColor: "#0000ff",
+        tertiaryFontSizePx: 26,
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.backgroundColor).toBe("rgb(0, 0, 255)");
+    expect(surface.style.fontSize).toBe("26px");
+  });
+
+  it("applies the group's single universal roundingCoefficient to every button, ignoring any per-button roundingCoefficient in buttonsJson", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          { id: "run", label: "Run", mode: "momentary", roundingCoefficient: 0.1 },
+        ]),
+        buttonHeightPx: 40,
+        roundingCoefficient: 0.5,
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    // Single (non-joined) button: all four corners get the full radius, buttonHeightPx * coefficient.
+    // The group's roundingCoefficient (0.5) wins over the button's own inline 0.1.
+    expect(surface.style.borderTopLeftRadius).toBe("20px");
+  });
+
+  it("defaults the universal roundingCoefficient to 0.2 when unconfigured", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([{ id: "run", label: "Run", mode: "momentary" }]),
+        buttonHeightPx: 40,
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.borderTopLeftRadius).toBe("8px");
+  });
+
+  it("overrides a button's own shadow coefficient once it opts into a shadowScheme", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          { id: "run", label: "Run", mode: "momentary", shadowCoefficient: 0.5, shadowScheme: "secondary" },
+        ]),
+        secondaryShadowCoefficient: 2,
+      },
+    });
+    const { container } = render(<Widget />);
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    // computeShadows(2)'s resting shadow -- see buttonWidget.utils.ts -- scales every value by the
+    // coefficient; checking for its distinctive doubled px values is enough to prove the group's
+    // shadowCoefficient (2), not the button's own inline one (0.5), was actually used.
+    expect(surface.style.boxShadow).toContain("8px");
+    expect(surface.style.boxShadow).toContain("16px");
   });
 });
 

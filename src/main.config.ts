@@ -26,65 +26,52 @@ export default defineConfig({
 
     infoOnModeState: {
       displayName:
-        'Info: mode ("momentary"|"switch"), defaultActive (bool, switch only), disabled (bool).',
-      type: "boolean",
-    },
-    infoOnEmoji: {
-      displayName:
-        "Info: icons/images aren't supported. Put an emoji right in label instead, e.g. " +
+        'Info: mode, defaultActive, disabled (bool). No icons — use an emoji in label, e.g. ' +
         '"🌍 Africa".',
       type: "boolean",
     },
     infoOnFontRounding: {
-      displayName:
-        "Info: fontSizePx (px, default 14), roundingCoefficient (0-0.5, default 0.2, corner " +
-        "radius).",
+      displayName: "Info: fontSizePx (px, default 14) — used only when fontSizeScheme is none.",
       type: "boolean",
     },
     infoOnPadding: {
       displayName:
-        "Info: paddingX (px, default 14), paddingY (px, default 8) — inner spacing around " +
-        "the label.",
-      type: "boolean",
-    },
-    infoOnMargin: {
-      displayName:
-        "Info: interactiveMarginX/Y (px, default 0/0) — transparent extra hit-area outside " +
-        "the button.",
+        "Info: paddingX/Y (14/8 default) label spacing; interactiveMarginX/Y (0/0) extra " +
+        "hit-area — both px.",
       type: "boolean",
     },
     infoOnPxReset: {
       displayName: "Info: for any *Px field above, a negative number resets it to its default value.",
       type: "boolean",
     },
-    infoOnColorsBase: {
-      displayName:
-        'Info: backgroundColor, textColor (strings, e.g. "#2563eb") — the button\'s default look.',
+    infoOnColorScheme: {
+      displayName: "Info: colorScheme (primary|secondary|tertiary|none, default none) picks a color scheme.",
       type: "boolean",
     },
-    infoOnColorsHover: {
+    infoOnFontSizeScheme: {
+      displayName: "Info: fontSizeScheme (primary|secondary|tertiary|none, default none) picks a font size.",
+      type: "boolean",
+    },
+    infoOnShadowScheme: {
+      displayName: "Info: shadowScheme (primary|secondary|tertiary|none, default none) picks a shadow depth.",
+      type: "boolean",
+    },
+    infoOnColorsBase: {
       displayName:
-        "Info: hoverBackgroundColor, hoverTextColor (strings) — look while the pointer hovers.",
+        "Info: background/textColor (default look), hover*Color (hover look) — used when " +
+        "colorScheme is none.",
       type: "boolean",
     },
     infoOnColorsPressed: {
       displayName:
-        "Info: pressedBackgroundColor, pressedTextColor (strings) — look during a tactile press.",
-      type: "boolean",
-    },
-    infoOnColorsActive: {
-      displayName:
-        "Info: activeBackgroundColor, activeTextColor (strings) — look while a switch is on.",
-      type: "boolean",
-    },
-    infoOnColorsDisabled: {
-      displayName:
-        "Info: disabledBackgroundColor, disabledTextColor (strings) — look while disabled.",
+        "Info: pressed*Color = pressed/active look, used when colorScheme is none. " +
+        "Disabled buttons fade.",
       type: "boolean",
     },
     infoOnShadow: {
       displayName:
-        "Info: shadowCoefficient (0-4, default 1) — scales shadow depth and press-down distance.",
+        "Info: shadowCoefficient (0-4, default 1) — shadow/press depth, used only when " +
+        "shadowScheme is none.",
       type: "boolean",
     },
 
@@ -101,9 +88,136 @@ export default defineConfig({
       type: "number",
     },
     buttonHeightPx: {
-      displayName: "Button height (px, clamped 28–96) — negative resets to default (40)",
+      displayName:
+        "Button height (px, clamped 240) — blank or negative to fill " +
+        "available height",
       type: "number",
     },
+    buttonVerticalPaddingPx: {
+      displayName:
+        "Button vertical padding — only vertical layout space placed " +
+        "above and below each button.",
+      type: "number",
+    },
+
+    // --- Color, font-size & shadow schemes, plus universal rounding ------------
+    // 3 named schemes (color, font size, shadow), each button opts into one independently per
+    // axis via its own colorScheme/fontSizeScheme/shadowScheme field (see the matching infoOn...
+    // toggles above) — each defaults to "none" (keeps that button's own inline field). A scheme
+    // other than "none" always overrides that button's own inline field in buttonsJson; there's
+    // no separate "active" color (it reuses pressed) or "disabled" color (always the default
+    // look, faded) entry. Corner rounding is NOT part of this scheme system — see
+    // roundingCoefficient below, a single value that always applies to every button.
+    primaryBackgroundColor: {
+      displayName: 'Primary scheme: background color (string, e.g. "#2563eb")',
+      type: "string",
+    },
+    primaryTextColor: {
+      displayName: "Primary scheme: text color",
+      type: "string",
+    },
+    primaryHoverBackgroundColor: {
+      displayName: "Primary scheme: hover background color",
+      type: "string",
+    },
+    primaryHoverTextColor: {
+      displayName: "Primary scheme: hover text color",
+      type: "string",
+    },
+    primaryPressedBackgroundColor: {
+      displayName: "Primary scheme: pressed/active background color",
+      type: "string",
+    },
+    primaryPressedTextColor: {
+      displayName: "Primary scheme: pressed/active text color",
+      type: "string",
+    },
+    primaryFontSizePx: {
+      displayName: "Primary scheme: font size (px, 8-48, negative resets to default 14)",
+      type: "number",
+    },
+
+    secondaryBackgroundColor: {
+      displayName: "Secondary scheme: background color",
+      type: "string",
+    },
+    secondaryTextColor: {
+      displayName: "Secondary scheme: text color",
+      type: "string",
+    },
+    secondaryHoverBackgroundColor: {
+      displayName: "Secondary scheme: hover background color",
+      type: "string",
+    },
+    secondaryHoverTextColor: {
+      displayName: "Secondary scheme: hover text color",
+      type: "string",
+    },
+    secondaryPressedBackgroundColor: {
+      displayName: "Secondary scheme: pressed/active background color",
+      type: "string",
+    },
+    secondaryPressedTextColor: {
+      displayName: "Secondary scheme: pressed/active text color",
+      type: "string",
+    },
+    secondaryFontSizePx: {
+      displayName: "Secondary scheme: font size (px, 8-48, negative resets to default 14)",
+      type: "number",
+    },
+
+    tertiaryBackgroundColor: {
+      displayName: "Tertiary scheme: background color",
+      type: "string",
+    },
+    tertiaryTextColor: {
+      displayName: "Tertiary scheme: text color",
+      type: "string",
+    },
+    tertiaryHoverBackgroundColor: {
+      displayName: "Tertiary scheme: hover background color",
+      type: "string",
+    },
+    tertiaryHoverTextColor: {
+      displayName: "Tertiary scheme: hover text color",
+      type: "string",
+    },
+    tertiaryPressedBackgroundColor: {
+      displayName: "Tertiary scheme: pressed/active background color",
+      type: "string",
+    },
+    tertiaryPressedTextColor: {
+      displayName: "Tertiary scheme: pressed/active text color",
+      type: "string",
+    },
+    tertiaryFontSizePx: {
+      displayName: "Tertiary scheme: font size (px, 8-48, negative resets to default 14)",
+      type: "number",
+    },
+
+    // roundingCoefficient/shadowCoefficient are unitless coefficients (not px), so — unlike the
+    // *Px fields above — a negative value here clamps up to the minimum rather than resetting to
+    // the default; see infoOnPxReset (which applies only to *Px fields) vs. these.
+    //
+    // Corner rounding is universal, not tiered like color/font size/shadow: this single
+    // roundingCoefficient always applies to every button in the group.
+    roundingCoefficient: {
+      displayName: "Corner rounding coefficient for every button (0-0.5, default 0.2)",
+      type: "number",
+    },
+    primaryShadowCoefficient: {
+      displayName: "Primary scheme: shadow/press depth coefficient (0-4, default 1)",
+      type: "number",
+    },
+    secondaryShadowCoefficient: {
+      displayName: "Secondary scheme: shadow/press depth coefficient (0-4, default 1)",
+      type: "number",
+    },
+    tertiaryShadowCoefficient: {
+      displayName: "Tertiary scheme: shadow/press depth coefficient (0-4, default 1)",
+      type: "number",
+    },
+
     disabled: {
       displayName: "Disabled",
       type: "boolean",
@@ -137,7 +251,7 @@ export default defineConfig({
       type: "string",
     },
     lastButtonInteraction: {
-      displayName: "Last button interaction (hover | hoverEnd | press | change)",
+      displayName: "Last button interaction (hover | hoverEnd | press | unpress | change)",
       type: "string",
     },
     lastButtonActive: {
@@ -160,7 +274,11 @@ export default defineConfig({
       parameterUpdateIds: ["lastButtonId", "lastButtonInteraction", "lastButtonActive"],
     },
     buttonPressed: {
-      displayName: "Button pressed",
+      displayName: "Button pressed (momentary activation, or a switch becoming selected)",
+      parameterUpdateIds: ["lastButtonId", "lastButtonInteraction", "lastButtonActive"],
+    },
+    buttonUnpressed: {
+      displayName: "Button unpressed (a switch becoming unselected)",
       parameterUpdateIds: ["lastButtonId", "lastButtonInteraction", "lastButtonActive"],
     },
     buttonChanged: {

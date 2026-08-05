@@ -1,10 +1,19 @@
 import type {
   ButtonMode,
+  ColorSchemeColors,
+  ColorSchemeName,
+  ColorSchemeTier,
   JoinedPosition,
   LayoutMode,
   ResolvedButtonConfig,
   ResolvedGroupConfig,
 } from "./buttonWidget.types.js";
+
+/** The three named color/font-size scheme tiers a button can opt into, in display order. */
+export const COLOR_SCHEME_NAMES = ["primary", "secondary", "tertiary"] as const satisfies readonly ColorSchemeName[];
+
+/** `COLOR_SCHEME_NAMES` plus "none" (opt out to the button's own inline fields). */
+export const COLOR_SCHEME_TIERS = [...COLOR_SCHEME_NAMES, "none"] as const satisfies readonly ColorSchemeTier[];
 
 // ---------------------------------------------------------------------------
 // Numeric clamping ranges (section 9 of the spec)
@@ -20,8 +29,51 @@ export const NUMERIC_RANGES = {
   shadowCoefficient: { min: 0, max: 4 },
   customGapPx: { min: 0, max: 128 },
   groupPaddingPx: { min: 0, max: 128 },
-  buttonHeightPx: { min: 28, max: 96 },
+  // Raised from the original 28-96 range: 96 was clamping fixed button heights too
+  // aggressively for larger tile-style buttons. A configured value above this ceiling still
+  // clamps down to 240, but the real, dynamic constraint is the widget's own available height
+  // (see the row's `flex: 1 1 auto` + `min-height: 0` in PalantirButtonGroup) — a button (and
+  // its hover-grow) is never allowed to render larger than what actually fits, regardless of
+  // this static ceiling.
+  buttonHeightPx: { min: 28, max: 240 },
+  buttonVerticalPaddingPx: { min: 0, max: 64 },
 } as const;
+
+/**
+ * Representative button height (px) used only to size the hover-grow/press-down animation
+ * buffer and the joined-corner radius when `buttonHeightPx` is `null` (auto-fill mode). In that
+ * mode the button's real rendered height isn't known synchronously (it's resolved by the browser
+ * from available space), so these two cosmetic calculations fall back to this constant rather
+ * than measuring the DOM.
+ */
+export const AUTO_HEIGHT_ANIMATION_BASIS_PX = 40;
+
+/**
+ * How long (ms) a switch button's locally-known click outcome (`pendingActive` in
+ * `PalantirButton`) must see the host-echoed `active` prop agree with it, continuously, before
+ * handing control back to that prop. Guards against out-of-order or bursty parameter deliveries
+ * around a click (host lag, or other parameters updating at the same time) transiently agreeing
+ * with the optimistic value for one render and then reverting — see the comment on the
+ * `pendingActive` settle effect in `PalantirButton.tsx`. Comfortably longer than the 120ms
+ * press/color transition so a burst of deliveries has room to fully settle before this fires.
+ */
+export const PENDING_ACTIVE_SETTLE_MS = 300;
+
+/**
+ * Opacity applied to a disabled button's visual surface. Disabled buttons don't have their own
+ * color fields (there's no `disabledBackgroundColor`/`disabledTextColor` anymore, per-button or
+ * per-scheme) — a disabled button always renders its normal default/unpressed background and
+ * text colors, just faded via this opacity, which reads as "disabled" regardless of what those
+ * colors actually are and needs no per-scheme configuration of its own.
+ */
+export const DISABLED_OPACITY = 0.5;
+
+/**
+ * Fixed horizontal gap (px) between buttons in `"space-between"` layout mode. Unlike
+ * `"custom-gap"` mode, this isn't configurable via a Workshop parameter — `customGapPx` has no
+ * effect here — it's always this constant. See `PalantirButtonGroup`'s `containerStyle.gap`.
+ */
+export const SPACE_BETWEEN_GAP_PX = 24;
 
 export const DEFAULT_BUTTON_CONFIG = {
   mode: "momentary" as ButtonMode,
@@ -29,7 +81,6 @@ export const DEFAULT_BUTTON_CONFIG = {
   disabled: false,
 
   fontSizePx: 14,
-  roundingCoefficient: 0.2,
 
   paddingX: 14,
   paddingY: 8,
@@ -37,6 +88,8 @@ export const DEFAULT_BUTTON_CONFIG = {
   interactiveMarginX: 0,
   interactiveMarginY: 0,
 
+  // Only actually rendered when colorScheme/fontSizeScheme/shadowScheme resolve to "none" (the
+  // default) — otherwise the group's chosen scheme overrides these. See applyButtonSchemes.
   backgroundColor: "#2563eb",
   textColor: "#ffffff",
 
@@ -46,21 +99,72 @@ export const DEFAULT_BUTTON_CONFIG = {
   pressedBackgroundColor: "#1e40af",
   pressedTextColor: "#ffffff",
 
-  activeBackgroundColor: "#1e40af",
-  activeTextColor: "#ffffff",
-
-  disabledBackgroundColor: "#d1d5db",
-  disabledTextColor: "#4b5563",
+  // "none" by default: a button keeps its own inline colors/font size/shadow until it explicitly
+  // opts into a group scheme, independently for each of the three. (Rounding has no scheme/opt-in
+  // — it's always the group's single universal value; see DEFAULT_GROUP_CONFIG.roundingCoefficient.)
+  colorScheme: "none" as ColorSchemeTier,
+  fontSizeScheme: "none" as ColorSchemeTier,
+  shadowScheme: "none" as ColorSchemeTier,
 
   shadowCoefficient: 1,
+};
+
+/** Default colors for one named color scheme when its Workshop parameters are unconfigured. */
+const DEFAULT_PRIMARY_SCHEME_COLORS: ColorSchemeColors = {
+  backgroundColor: "#2563eb",
+  textColor: "#ffffff",
+  hoverBackgroundColor: "#1d4ed8",
+  hoverTextColor: "#ffffff",
+  pressedBackgroundColor: "#1e40af",
+  pressedTextColor: "#ffffff",
+};
+const DEFAULT_SECONDARY_SCHEME_COLORS: ColorSchemeColors = {
+  backgroundColor: "#64748b",
+  textColor: "#ffffff",
+  hoverBackgroundColor: "#475569",
+  hoverTextColor: "#ffffff",
+  pressedBackgroundColor: "#334155",
+  pressedTextColor: "#ffffff",
+};
+const DEFAULT_TERTIARY_SCHEME_COLORS: ColorSchemeColors = {
+  backgroundColor: "#e2e8f0",
+  textColor: "#1e293b",
+  hoverBackgroundColor: "#cbd5e1",
+  hoverTextColor: "#1e293b",
+  pressedBackgroundColor: "#94a3b8",
+  pressedTextColor: "#1e293b",
 };
 
 export const DEFAULT_GROUP_CONFIG: ResolvedGroupConfig = {
   layoutMode: "joined",
   customGapPx: 8,
   groupPaddingPx: 0,
-  buttonHeightPx: 40,
+  // `null` = auto-fill the widget's available height. This is the default: an author who never
+  // touches buttonHeightPx (or who sets it negative, matching the *Px "reset" convention used
+  // elsewhere) gets a button that fills the widget rather than a fixed 40px height.
+  buttonHeightPx: null,
+  buttonVerticalPaddingPx: 0,
   disabled: false,
+  colorSchemes: {
+    primary: DEFAULT_PRIMARY_SCHEME_COLORS,
+    secondary: DEFAULT_SECONDARY_SCHEME_COLORS,
+    tertiary: DEFAULT_TERTIARY_SCHEME_COLORS,
+  },
+  fontSizeSchemes: {
+    primary: 14,
+    secondary: 14,
+    tertiary: 14,
+  },
+  // A single universal value applied to every button, unlike the three-tier color/font/shadow
+  // schemes above — see ResolvedGroupConfig.roundingCoefficient.
+  roundingCoefficient: 0.2,
+  // Matches DEFAULT_BUTTON_CONFIG.shadowCoefficient — a scheme's own coefficient is only actually
+  // different once its Workshop parameters are configured.
+  shadowSchemes: {
+    primary: 1,
+    secondary: 1,
+    tertiary: 1,
+  },
 };
 
 export const DEFAULT_BUTTONS_JSON = JSON.stringify(
@@ -197,12 +301,11 @@ export function resolveButtonConfig(
       NUMERIC_RANGES.fontSizePx.max,
       DEFAULT_BUTTON_CONFIG.fontSizePx,
     ),
-    roundingCoefficient: clampNumber(
-      raw.roundingCoefficient,
-      NUMERIC_RANGES.roundingCoefficient.min,
-      NUMERIC_RANGES.roundingCoefficient.max,
-      DEFAULT_BUTTON_CONFIG.roundingCoefficient,
-    ),
+    // roundingCoefficient is intentionally NOT parsed from `raw` here — it's not a per-button
+    // field anymore. It's always overwritten with the group's single universal value in
+    // `applyButtonSchemes`; this placeholder is only what a button would render with if that step
+    // were ever skipped.
+    roundingCoefficient: DEFAULT_GROUP_CONFIG.roundingCoefficient,
 
     // paddingX/paddingY/interactiveMarginX/interactiveMarginY are pixel dimensions: a negative
     // value resets each field to its default rather than clamping up to its minimum.
@@ -250,19 +353,16 @@ export function resolveButtonConfig(
       DEFAULT_BUTTON_CONFIG.pressedTextColor,
     ),
 
-    activeBackgroundColor: parseStringValue(
-      raw.activeBackgroundColor,
-      DEFAULT_BUTTON_CONFIG.activeBackgroundColor,
+    colorScheme: parseEnumValue(raw.colorScheme, COLOR_SCHEME_TIERS, DEFAULT_BUTTON_CONFIG.colorScheme),
+    fontSizeScheme: parseEnumValue(
+      raw.fontSizeScheme,
+      COLOR_SCHEME_TIERS,
+      DEFAULT_BUTTON_CONFIG.fontSizeScheme,
     ),
-    activeTextColor: parseStringValue(raw.activeTextColor, DEFAULT_BUTTON_CONFIG.activeTextColor),
-
-    disabledBackgroundColor: parseStringValue(
-      raw.disabledBackgroundColor,
-      DEFAULT_BUTTON_CONFIG.disabledBackgroundColor,
-    ),
-    disabledTextColor: parseStringValue(
-      raw.disabledTextColor,
-      DEFAULT_BUTTON_CONFIG.disabledTextColor,
+    shadowScheme: parseEnumValue(
+      raw.shadowScheme,
+      COLOR_SCHEME_TIERS,
+      DEFAULT_BUTTON_CONFIG.shadowScheme,
     ),
 
     shadowCoefficient: clampNumber(
@@ -534,6 +634,23 @@ export function activeButtonIdsToArray(ids: Set<string> | string[]): string[] {
 }
 
 /**
+ * Content equality for two button-id sets (order-independent), used to decide whether a
+ * reconciliation against the host-provided `activeButtonIdsJson` actually changes anything — see
+ * the comment on Widget.tsx's reconciliation `useEffect` for why this matters.
+ */
+export function areButtonIdSetsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const id of a) {
+    if (!b.has(id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Filters out hidden buttons and merges the force-disabled overlay onto the remainder, without
  * mutating the input array or any button config object. Applies `hiddenButtonIdsArray` /
  * `disabledButtonIdsArray` (converted via `toButtonIdSet`) on top of the buttons already
@@ -586,12 +703,86 @@ export function computeInitialActiveButtonIds(
 // Group-level parameter parsing
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolves `buttonHeightPx` to either a clamped fixed height, or `null` meaning "automatically
+ * fill the available height." Unlike the other `*Px` group fields, its "reset" default isn't
+ * another number — leaving it unconfigured (`undefined`) or setting it negative both mean
+ * "auto-fill," matching the *Px convention that a negative value undoes a customized number, and
+ * additionally treating "never configured" the same way (rather than falling back to some fixed
+ * default height).
+ */
+export function resolveButtonHeightPx(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.min(
+    NUMERIC_RANGES.buttonHeightPx.max,
+    Math.max(NUMERIC_RANGES.buttonHeightPx.min, numeric),
+  );
+}
+
+/** One named scheme's 6 flat color parameter values, as delivered by Workshop (e.g. `primaryBackgroundColor`). */
+interface RawSchemeColorValues {
+  backgroundColor?: string;
+  textColor?: string;
+  hoverBackgroundColor?: string;
+  hoverTextColor?: string;
+  pressedBackgroundColor?: string;
+  pressedTextColor?: string;
+}
+
+function resolveSchemeColors(values: RawSchemeColorValues, fallback: ColorSchemeColors): ColorSchemeColors {
+  return {
+    backgroundColor: parseStringValue(values.backgroundColor, fallback.backgroundColor),
+    textColor: parseStringValue(values.textColor, fallback.textColor),
+    hoverBackgroundColor: parseStringValue(values.hoverBackgroundColor, fallback.hoverBackgroundColor),
+    hoverTextColor: parseStringValue(values.hoverTextColor, fallback.hoverTextColor),
+    pressedBackgroundColor: parseStringValue(values.pressedBackgroundColor, fallback.pressedBackgroundColor),
+    pressedTextColor: parseStringValue(values.pressedTextColor, fallback.pressedTextColor),
+  };
+}
+
 export function parseGroupConfig(values: {
   layoutMode?: string;
   customGapPx?: number;
   groupPaddingPx?: number;
   buttonHeightPx?: number;
+  buttonVerticalPaddingPx?: number;
   disabled?: boolean;
+
+  primaryBackgroundColor?: string;
+  primaryTextColor?: string;
+  primaryHoverBackgroundColor?: string;
+  primaryHoverTextColor?: string;
+  primaryPressedBackgroundColor?: string;
+  primaryPressedTextColor?: string;
+  primaryFontSizePx?: number;
+
+  secondaryBackgroundColor?: string;
+  secondaryTextColor?: string;
+  secondaryHoverBackgroundColor?: string;
+  secondaryHoverTextColor?: string;
+  secondaryPressedBackgroundColor?: string;
+  secondaryPressedTextColor?: string;
+  secondaryFontSizePx?: number;
+
+  tertiaryBackgroundColor?: string;
+  tertiaryTextColor?: string;
+  tertiaryHoverBackgroundColor?: string;
+  tertiaryHoverTextColor?: string;
+  tertiaryPressedBackgroundColor?: string;
+  tertiaryPressedTextColor?: string;
+  tertiaryFontSizePx?: number;
+
+  roundingCoefficient?: number;
+
+  primaryShadowCoefficient?: number;
+  secondaryShadowCoefficient?: number;
+  tertiaryShadowCoefficient?: number;
 }): ResolvedGroupConfig {
   return {
     layoutMode: parseEnumValue(
@@ -613,15 +804,148 @@ export function parseGroupConfig(values: {
       NUMERIC_RANGES.groupPaddingPx.max,
       DEFAULT_GROUP_CONFIG.groupPaddingPx,
     ),
-    // buttonHeightPx is a pixel dimension: a negative value resets it to the default.
-    buttonHeightPx: resolvePxValue(
-      values.buttonHeightPx,
-      NUMERIC_RANGES.buttonHeightPx.min,
-      NUMERIC_RANGES.buttonHeightPx.max,
-      DEFAULT_GROUP_CONFIG.buttonHeightPx,
+    // buttonHeightPx: unconfigured or negative means "auto-fill the available height" (null);
+    // otherwise clamped to the documented range. See resolveButtonHeightPx.
+    buttonHeightPx: resolveButtonHeightPx(values.buttonHeightPx),
+    // buttonVerticalPaddingPx is a pixel dimension, consistent with the other *Px group fields: a
+    // negative value resets it to the default (0), and — critically — an explicit 0 is preserved
+    // rather than falling back to the default via truthiness (0 is not null/undefined, so it
+    // takes the `value` branch below, not the `fallback` one).
+    buttonVerticalPaddingPx: resolvePxValue(
+      values.buttonVerticalPaddingPx,
+      NUMERIC_RANGES.buttonVerticalPaddingPx.min,
+      NUMERIC_RANGES.buttonVerticalPaddingPx.max,
+      DEFAULT_GROUP_CONFIG.buttonVerticalPaddingPx,
     ),
     disabled: parseBooleanValue(values.disabled, DEFAULT_GROUP_CONFIG.disabled),
+    colorSchemes: {
+      primary: resolveSchemeColors(
+        {
+          backgroundColor: values.primaryBackgroundColor,
+          textColor: values.primaryTextColor,
+          hoverBackgroundColor: values.primaryHoverBackgroundColor,
+          hoverTextColor: values.primaryHoverTextColor,
+          pressedBackgroundColor: values.primaryPressedBackgroundColor,
+          pressedTextColor: values.primaryPressedTextColor,
+        },
+        DEFAULT_GROUP_CONFIG.colorSchemes.primary,
+      ),
+      secondary: resolveSchemeColors(
+        {
+          backgroundColor: values.secondaryBackgroundColor,
+          textColor: values.secondaryTextColor,
+          hoverBackgroundColor: values.secondaryHoverBackgroundColor,
+          hoverTextColor: values.secondaryHoverTextColor,
+          pressedBackgroundColor: values.secondaryPressedBackgroundColor,
+          pressedTextColor: values.secondaryPressedTextColor,
+        },
+        DEFAULT_GROUP_CONFIG.colorSchemes.secondary,
+      ),
+      tertiary: resolveSchemeColors(
+        {
+          backgroundColor: values.tertiaryBackgroundColor,
+          textColor: values.tertiaryTextColor,
+          hoverBackgroundColor: values.tertiaryHoverBackgroundColor,
+          hoverTextColor: values.tertiaryHoverTextColor,
+          pressedBackgroundColor: values.tertiaryPressedBackgroundColor,
+          pressedTextColor: values.tertiaryPressedTextColor,
+        },
+        DEFAULT_GROUP_CONFIG.colorSchemes.tertiary,
+      ),
+    },
+    fontSizeSchemes: {
+      primary: resolvePxValue(
+        values.primaryFontSizePx,
+        NUMERIC_RANGES.fontSizePx.min,
+        NUMERIC_RANGES.fontSizePx.max,
+        DEFAULT_GROUP_CONFIG.fontSizeSchemes.primary,
+      ),
+      secondary: resolvePxValue(
+        values.secondaryFontSizePx,
+        NUMERIC_RANGES.fontSizePx.min,
+        NUMERIC_RANGES.fontSizePx.max,
+        DEFAULT_GROUP_CONFIG.fontSizeSchemes.secondary,
+      ),
+      tertiary: resolvePxValue(
+        values.tertiaryFontSizePx,
+        NUMERIC_RANGES.fontSizePx.min,
+        NUMERIC_RANGES.fontSizePx.max,
+        DEFAULT_GROUP_CONFIG.fontSizeSchemes.tertiary,
+      ),
+    },
+    // roundingCoefficient is a unitless coefficient, not a pixel dimension, so it clamps negative
+    // values up to its minimum via clampNumber rather than resetting to the default via
+    // resolvePxValue — consistent with shadowCoefficient below. Unlike color/font/shadow, it's a
+    // single universal value, not one per named scheme.
+    roundingCoefficient: clampNumber(
+      values.roundingCoefficient,
+      NUMERIC_RANGES.roundingCoefficient.min,
+      NUMERIC_RANGES.roundingCoefficient.max,
+      DEFAULT_GROUP_CONFIG.roundingCoefficient,
+    ),
+    shadowSchemes: {
+      primary: clampNumber(
+        values.primaryShadowCoefficient,
+        NUMERIC_RANGES.shadowCoefficient.min,
+        NUMERIC_RANGES.shadowCoefficient.max,
+        DEFAULT_GROUP_CONFIG.shadowSchemes.primary,
+      ),
+      secondary: clampNumber(
+        values.secondaryShadowCoefficient,
+        NUMERIC_RANGES.shadowCoefficient.min,
+        NUMERIC_RANGES.shadowCoefficient.max,
+        DEFAULT_GROUP_CONFIG.shadowSchemes.secondary,
+      ),
+      tertiary: clampNumber(
+        values.tertiaryShadowCoefficient,
+        NUMERIC_RANGES.shadowCoefficient.min,
+        NUMERIC_RANGES.shadowCoefficient.max,
+        DEFAULT_GROUP_CONFIG.shadowSchemes.tertiary,
+      ),
+    },
   };
+}
+
+/**
+ * Applies each button's chosen `colorScheme` / `fontSizeScheme` / `shadowScheme` (see
+ * `ButtonConfig`) onto its rendered colors, font size, and shadow coefficient — three independent
+ * axes, each overriding that button's own inline field whenever its chosen scheme isn't "none"
+ * (the group-level scheme always wins over a button's inline `buttonsJson` field when both are
+ * present). A button with "none" for a given axis is untouched on that axis and keeps rendering
+ * its own inline field exactly as before.
+ *
+ * Corner rounding is handled separately and unconditionally: every button always renders with the
+ * group's single universal `roundingCoefficient` — there's no per-button opt-in/opt-out for it.
+ *
+ * Applied to `buttons` after `applyButtonVisibilityAndDisabled`, right before rendering (see
+ * Widget.tsx).
+ */
+export function applyButtonSchemes(
+  buttons: ResolvedButtonConfig[],
+  groupConfig: ResolvedGroupConfig,
+): ResolvedButtonConfig[] {
+  return buttons.map((button) => {
+    let resolved = { ...button, roundingCoefficient: groupConfig.roundingCoefficient };
+    if (button.colorScheme !== "none") {
+      const scheme = groupConfig.colorSchemes[button.colorScheme];
+      resolved = {
+        ...resolved,
+        backgroundColor: scheme.backgroundColor,
+        textColor: scheme.textColor,
+        hoverBackgroundColor: scheme.hoverBackgroundColor,
+        hoverTextColor: scheme.hoverTextColor,
+        pressedBackgroundColor: scheme.pressedBackgroundColor,
+        pressedTextColor: scheme.pressedTextColor,
+      };
+    }
+    if (button.fontSizeScheme !== "none") {
+      resolved = { ...resolved, fontSizePx: groupConfig.fontSizeSchemes[button.fontSizeScheme] };
+    }
+    if (button.shadowScheme !== "none") {
+      resolved = { ...resolved, shadowCoefficient: groupConfig.shadowSchemes[button.shadowScheme] };
+    }
+    return resolved;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -633,7 +957,7 @@ export function computeBorderRadiusPx(buttonHeightPx: number, roundingCoefficien
     roundingCoefficient,
     NUMERIC_RANGES.roundingCoefficient.min,
     NUMERIC_RANGES.roundingCoefficient.max,
-    DEFAULT_BUTTON_CONFIG.roundingCoefficient,
+    DEFAULT_GROUP_CONFIG.roundingCoefficient,
   );
   return buttonHeightPx * clampedCoefficient;
 }

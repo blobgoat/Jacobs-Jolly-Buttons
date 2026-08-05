@@ -5,7 +5,10 @@ import { useWidgetContext } from "./context.js";
 import type { InternalButtonEvent } from "./buttonWidget.types.js";
 import {
   activeButtonIdsToArray,
+  applyButtonSchemes,
   applyButtonVisibilityAndDisabled,
+  areButtonIdSetsEqual,
+  AUTO_HEIGHT_ANIMATION_BASIS_PX,
   computeInitialActiveButtonIds,
   DEFAULT_BUTTONS_JSON,
   NO_VALID_BUTTONS_MESSAGE,
@@ -45,14 +48,6 @@ export const Widget: React.FC = () => {
     () => toButtonIdSet(parameters.values.hiddenButtonIdsArray),
     [parameters.values.hiddenButtonIdsArray],
   );
-  // Hidden buttons are dropped entirely for rendering; force-disabled ids are merged onto the
-  // remainder. Active-state tracking below stays keyed off the full, unfiltered `buttons` list so
-  // a switch's state is preserved (and restored) even while it's hidden or force-disabled.
-  const displayButtons = useMemo(
-    () => applyButtonVisibilityAndDisabled(buttons, hiddenButtonIds, disabledButtonIds),
-    [buttons, hiddenButtonIds, disabledButtonIds],
-  );
-
   const groupConfig = useMemo(
     () =>
       parseGroupConfig({
@@ -60,26 +55,121 @@ export const Widget: React.FC = () => {
         customGapPx: parameters.values.customGapPx,
         groupPaddingPx: parameters.values.groupPaddingPx,
         buttonHeightPx: parameters.values.buttonHeightPx,
+        buttonVerticalPaddingPx: parameters.values.buttonVerticalPaddingPx,
         disabled: parameters.values.disabled,
+
+        primaryBackgroundColor: parameters.values.primaryBackgroundColor,
+        primaryTextColor: parameters.values.primaryTextColor,
+        primaryHoverBackgroundColor: parameters.values.primaryHoverBackgroundColor,
+        primaryHoverTextColor: parameters.values.primaryHoverTextColor,
+        primaryPressedBackgroundColor: parameters.values.primaryPressedBackgroundColor,
+        primaryPressedTextColor: parameters.values.primaryPressedTextColor,
+        primaryFontSizePx: parameters.values.primaryFontSizePx,
+
+        secondaryBackgroundColor: parameters.values.secondaryBackgroundColor,
+        secondaryTextColor: parameters.values.secondaryTextColor,
+        secondaryHoverBackgroundColor: parameters.values.secondaryHoverBackgroundColor,
+        secondaryHoverTextColor: parameters.values.secondaryHoverTextColor,
+        secondaryPressedBackgroundColor: parameters.values.secondaryPressedBackgroundColor,
+        secondaryPressedTextColor: parameters.values.secondaryPressedTextColor,
+        secondaryFontSizePx: parameters.values.secondaryFontSizePx,
+
+        tertiaryBackgroundColor: parameters.values.tertiaryBackgroundColor,
+        tertiaryTextColor: parameters.values.tertiaryTextColor,
+        tertiaryHoverBackgroundColor: parameters.values.tertiaryHoverBackgroundColor,
+        tertiaryHoverTextColor: parameters.values.tertiaryHoverTextColor,
+        tertiaryPressedBackgroundColor: parameters.values.tertiaryPressedBackgroundColor,
+        tertiaryPressedTextColor: parameters.values.tertiaryPressedTextColor,
+        tertiaryFontSizePx: parameters.values.tertiaryFontSizePx,
+
+        roundingCoefficient: parameters.values.roundingCoefficient,
+
+        primaryShadowCoefficient: parameters.values.primaryShadowCoefficient,
+        secondaryShadowCoefficient: parameters.values.secondaryShadowCoefficient,
+        tertiaryShadowCoefficient: parameters.values.tertiaryShadowCoefficient,
       }),
     [
       parameters.values.layoutMode,
       parameters.values.customGapPx,
       parameters.values.groupPaddingPx,
       parameters.values.buttonHeightPx,
+      parameters.values.buttonVerticalPaddingPx,
       parameters.values.disabled,
+      parameters.values.primaryBackgroundColor,
+      parameters.values.primaryTextColor,
+      parameters.values.primaryHoverBackgroundColor,
+      parameters.values.primaryHoverTextColor,
+      parameters.values.primaryPressedBackgroundColor,
+      parameters.values.primaryPressedTextColor,
+      parameters.values.primaryFontSizePx,
+      parameters.values.secondaryBackgroundColor,
+      parameters.values.secondaryTextColor,
+      parameters.values.secondaryHoverBackgroundColor,
+      parameters.values.secondaryHoverTextColor,
+      parameters.values.secondaryPressedBackgroundColor,
+      parameters.values.secondaryPressedTextColor,
+      parameters.values.secondaryFontSizePx,
+      parameters.values.tertiaryBackgroundColor,
+      parameters.values.tertiaryTextColor,
+      parameters.values.tertiaryHoverBackgroundColor,
+      parameters.values.tertiaryHoverTextColor,
+      parameters.values.tertiaryPressedBackgroundColor,
+      parameters.values.tertiaryPressedTextColor,
+      parameters.values.tertiaryFontSizePx,
+      parameters.values.roundingCoefficient,
+      parameters.values.primaryShadowCoefficient,
+      parameters.values.secondaryShadowCoefficient,
+      parameters.values.tertiaryShadowCoefficient,
     ],
   );
+
+  // Hidden buttons are dropped entirely for rendering; force-disabled ids are merged onto the
+  // remainder; each remaining button's colorScheme/fontSizeScheme/shadowScheme (each defaulting
+  // to "none") is then applied, overriding its own inline buttonsJson fields whenever it isn't
+  // "none", and its rounding is always overwritten with the group's single universal
+  // roundingCoefficient — see applyButtonSchemes. Active-state tracking below stays keyed off the
+  // full, unfiltered `buttons` list so a switch's state is preserved (and restored) even while
+  // it's hidden or force-disabled.
+  const displayButtons = useMemo(
+    () =>
+      applyButtonSchemes(
+        applyButtonVisibilityAndDisabled(buttons, hiddenButtonIds, disabledButtonIds),
+        groupConfig,
+      ),
+    [buttons, hiddenButtonIds, disabledButtonIds, groupConfig],
+  );
+
+  // Loading-state placeholder only: buttonHeightPx being null (auto-fill mode) has nothing to
+  // measure yet since there are no real buttons rendered, so the skeleton falls back to the same
+  // representative constant used elsewhere for buttonHeightPx-unaware cosmetic calculations.
+  const skeletonHeightPx = groupConfig.buttonHeightPx ?? AUTO_HEIGHT_ANIMATION_BASIS_PX;
 
   const [activeButtonIds, setActiveButtonIds] = useState<Set<string>>(() => new Set());
 
   // Initialize from `defaultActive` / reconcile with the host-provided `activeButtonIdsJson`
   // whenever it changes (including after this widget's own optimistic updates round-trip back).
+  //
+  // This must NOT unconditionally overwrite `activeButtonIds` with whatever this recomputes,
+  // even though `parameters.values.activeButtonIdsJson` is the dependency that triggers it. A
+  // click already updates `activeButtonIds` optimistically (see "change" below) before this
+  // parameter has round-tripped back through the host at all; if the host's `parameters.values`
+  // object gets rebuilt (new array reference, identical content) for any *unrelated* reason
+  // while that round trip is still in flight — another parameter changing, an SDK heartbeat,
+  // whatever — this effect re-runs, and overwriting with a same-content-but-fresh Set would
+  // force PalantirButtonGroup and every button to re-render for no reason. Worse, if the
+  // round-tripped value briefly still reflects the *pre-click* state, a blind overwrite would
+  // regress the just-clicked switch back to its old value for a render and then snap forward
+  // again once the real echo lands — which is exactly a press/active transition playing twice.
+  // Comparing by content and bailing out (returning the same Set instance) when nothing
+  // genuinely changed avoids both: React skips the render entirely when the updater returns the
+  // existing state reference, so a same-content echo is a no-op, and a real content difference
+  // (the host's actual authoritative value) still applies normally.
   useEffect(() => {
     if (isLoading) {
       return;
     }
-    setActiveButtonIds(computeInitialActiveButtonIds(buttons, parameters.values.activeButtonIdsJson));
+    const reconciled = computeInitialActiveButtonIds(buttons, parameters.values.activeButtonIdsJson);
+    setActiveButtonIds((current) => (areButtonIdSetsEqual(current, reconciled) ? current : reconciled));
   }, [isLoading, buttons, parameters.values.activeButtonIdsJson]);
 
   const handleButtonEvent = useCallback(
@@ -117,6 +207,17 @@ export const Widget: React.FC = () => {
         return;
       }
 
+      if (event.type === "unpress") {
+        emitEvent("buttonUnpressed", {
+          parameterUpdates: {
+            lastButtonId: event.id,
+            lastButtonInteraction: "unpress",
+            lastButtonActive: event.active,
+          },
+        });
+        return;
+      }
+
       // "change"
       const nextActiveButtonIds = new Set(activeButtonIds);
       if (event.active) {
@@ -148,6 +249,8 @@ export const Widget: React.FC = () => {
         style={{
           width: "100%",
           height: "100%",
+          minWidth: "0px",
+          minHeight: "0px",
           boxSizing: "border-box",
           overflowY: "hidden",
         }}
@@ -155,9 +258,9 @@ export const Widget: React.FC = () => {
         {isLoading ? (
           <Skeleton>
             <Flex gap="2" align="center">
-              <Box style={{ width: 120, height: groupConfig.buttonHeightPx, borderRadius: 8 }} />
-              <Box style={{ width: 120, height: groupConfig.buttonHeightPx, borderRadius: 8 }} />
-              <Box style={{ width: 120, height: groupConfig.buttonHeightPx, borderRadius: 8 }} />
+              <Box style={{ width: 120, height: skeletonHeightPx, borderRadius: 8 }} />
+              <Box style={{ width: 120, height: skeletonHeightPx, borderRadius: 8 }} />
+              <Box style={{ width: 120, height: skeletonHeightPx, borderRadius: 8 }} />
             </Flex>
           </Skeleton>
         ) : buttonsResult.parseError ? (
@@ -194,6 +297,7 @@ export const Widget: React.FC = () => {
               customGapPx={groupConfig.customGapPx}
               groupPaddingPx={groupConfig.groupPaddingPx}
               buttonHeightPx={groupConfig.buttonHeightPx}
+              buttonVerticalPaddingPx={groupConfig.buttonVerticalPaddingPx}
               disabled={groupConfig.disabled}
               activeButtonIds={activeButtonIds}
               onButtonEvent={handleButtonEvent}

@@ -6,7 +6,38 @@ export type ButtonMode = "momentary" | "switch";
 
 export type LayoutMode = "joined" | "space-between" | "custom-gap";
 
-export type ButtonInteraction = "hover" | "hoverEnd" | "press" | "change";
+export type ButtonInteraction = "hover" | "hoverEnd" | "press" | "unpress" | "change";
+
+/** One of the group's three named schemes (color, font size, or shadow), or "none" to opt out. */
+export type ColorSchemeName = "primary" | "secondary" | "tertiary";
+
+/**
+ * Which scheme a button uses for one particular axis (color, font size, or shadow — each picked
+ * independently, see `ButtonConfig.colorScheme`/`fontSizeScheme`/`shadowScheme`). "none" opts the
+ * button out for that axis, falling back to its own inline field in `buttonsJson`
+ * (`backgroundColor`, `fontSizePx`, `shadowCoefficient`, etc.) instead of one of the group's three
+ * named schemes. See `ResolvedGroupConfig`'s `colorSchemes`/`fontSizeSchemes`/`shadowSchemes` and
+ * `applyButtonSchemes`. (Corner rounding is not part of this scheme system — it's a single
+ * universal group-level setting; see `ResolvedGroupConfig.roundingCoefficient`.)
+ */
+export type ColorSchemeTier = ColorSchemeName | "none";
+
+/**
+ * The six colors that make up one named color scheme: a default (unpressed/resting) look, a
+ * hover look, and a pressed look, each as a background/text pair. There is no separate "active"
+ * entry — a switch that's active reuses the pressed colors (it's meant to look "pushed in," the
+ * same as a momentary button mid-press) — and no separate "disabled" entry — a disabled button
+ * always uses the default look at reduced opacity instead of a distinct color. See
+ * `PalantirButton.tsx`'s color `useMemo` and `DISABLED_OPACITY`.
+ */
+export interface ColorSchemeColors {
+  backgroundColor: string;
+  textColor: string;
+  hoverBackgroundColor: string;
+  hoverTextColor: string;
+  pressedBackgroundColor: string;
+  pressedTextColor: string;
+}
 
 /** Position of a button within a visually joined chain of buttons. */
 export type JoinedPosition = "single" | "first" | "middle" | "last";
@@ -20,8 +51,9 @@ export interface ButtonConfig {
   defaultActive?: boolean;
   disabled?: boolean;
 
+  // Only takes effect when fontSizeScheme below is "none" — otherwise the group-level scheme's
+  // font size overrides it. See `fontSizeScheme`.
   fontSizePx?: number;
-  roundingCoefficient?: number;
 
   paddingX?: number;
   paddingY?: number;
@@ -29,6 +61,8 @@ export interface ButtonConfig {
   interactiveMarginX?: number;
   interactiveMarginY?: number;
 
+  // Only take effect when the corresponding scheme field below is "none" — otherwise the
+  // group-level scheme's colors/font size override these. See `colorScheme` / `fontSizeScheme`.
   backgroundColor?: string;
   textColor?: string;
 
@@ -38,13 +72,35 @@ export interface ButtonConfig {
   pressedBackgroundColor?: string;
   pressedTextColor?: string;
 
-  activeBackgroundColor?: string;
-  activeTextColor?: string;
+  /**
+   * Which of the group's three named color schemes this button uses for its background/text
+   * colors (default/hover/pressed, and — reusing the pressed colors — active). Defaults to
+   * "none" when unset, which keeps this button's own inline color fields above. Set to
+   * "primary"/"secondary"/"tertiary" to opt in — a scheme other than "none" always overrides
+   * those inline fields, even if they're also set.
+   */
+  colorScheme?: ColorSchemeTier;
 
-  disabledBackgroundColor?: string;
-  disabledTextColor?: string;
+  /**
+   * Which of the group's three named font sizes this button uses. Defaults to "none" when
+   * unset, which keeps this button's own `fontSizePx`. Set to "primary"/"secondary"/"tertiary" to
+   * opt in — a scheme other than "none" always overrides `fontSizePx`, even if it's also set.
+   * Independent of `colorScheme` — a button can mix, e.g., secondary colors with the tertiary
+   * font size.
+   */
+  fontSizeScheme?: ColorSchemeTier;
 
+  // Only takes effect when shadowScheme below is "none" — otherwise the group-level scheme's
+  // shadow coefficient overrides it. See `shadowScheme`.
   shadowCoefficient?: number;
+
+  /**
+   * Which of the group's three named shadow coefficients this button uses. Defaults to "none"
+   * when unset, which keeps this button's own `shadowCoefficient`. Set to
+   * "primary"/"secondary"/"tertiary" to opt in — a scheme other than "none" always overrides
+   * `shadowCoefficient`, even if it's also set. Independent of the other three scheme fields.
+   */
+  shadowScheme?: ColorSchemeTier;
 }
 
 /**
@@ -59,7 +115,11 @@ export interface ResolvedButtonConfig {
   defaultActive: boolean;
   disabled: boolean;
 
+  // Only actually rendered when fontSizeScheme resolves to "none" (the default) — otherwise the
+  // group's chosen scheme overrides it. See `applyButtonSchemes`.
   fontSizePx: number;
+  // Always the group's single universal rounding coefficient — not part of the scheme system and
+  // not configurable per button. See `ResolvedGroupConfig.roundingCoefficient`.
   roundingCoefficient: number;
 
   paddingX: number;
@@ -68,6 +128,10 @@ export interface ResolvedButtonConfig {
   interactiveMarginX: number;
   interactiveMarginY: number;
 
+  // These four hold this button's OWN inline colors — only actually used for rendering when
+  // colorScheme is "none" (the default). When colorScheme resolves to a named scheme instead,
+  // `applyButtonSchemes` overwrites these with that scheme's colors before this config reaches
+  // PalantirButton, and PalantirButton itself always just renders whatever ends up here.
   backgroundColor: string;
   textColor: string;
 
@@ -77,12 +141,12 @@ export interface ResolvedButtonConfig {
   pressedBackgroundColor: string;
   pressedTextColor: string;
 
-  activeBackgroundColor: string;
-  activeTextColor: string;
+  colorScheme: ColorSchemeTier;
+  fontSizeScheme: ColorSchemeTier;
+  shadowScheme: ColorSchemeTier;
 
-  disabledBackgroundColor: string;
-  disabledTextColor: string;
-
+  // Only actually rendered when shadowScheme resolves to "none" (the default) — otherwise the
+  // group's chosen scheme overrides it. See `applyButtonSchemes`.
   shadowCoefficient: number;
 }
 
@@ -91,15 +155,66 @@ export interface ResolvedGroupConfig {
   layoutMode: LayoutMode;
   customGapPx: number;
   groupPaddingPx: number;
-  buttonHeightPx: number;
+  /**
+   * Fixed visible-button height in px, or `null` to automatically fill whatever vertical space
+   * is actually available in the widget. `null` results from the parameter being left
+   * unconfigured or set to a negative number — see `resolveButtonHeightPx`.
+   */
+  buttonHeightPx: number | null;
+  /**
+   * Vertical layout space (px) placed above and below every button, outside the visible button's
+   * exact height. Does not add horizontal space and does not change any button's internal
+   * padding — see `paddingX`/`paddingY` for that.
+   */
+  buttonVerticalPaddingPx: number;
   disabled: boolean;
+  /**
+   * The group's three named color schemes ("primary", "secondary", "tertiary"), each resolved
+   * from 6 flat Workshop parameters (e.g. `primaryBackgroundColor`, `primaryHoverTextColor`, ...).
+   * A button picks one via its own `colorScheme` field (`ButtonConfig.colorScheme`) — see
+   * `applyButtonSchemes`, which is what actually applies a button's chosen scheme onto its
+   * rendered colors.
+   */
+  colorSchemes: Record<ColorSchemeName, ColorSchemeColors>;
+  /**
+   * The group's three named font sizes (px), one per scheme name, resolved from
+   * `primaryFontSizePx` / `secondaryFontSizePx` / `tertiaryFontSizePx`. A button picks one via its
+   * own `fontSizeScheme` field, independent of the other three scheme fields — see
+   * `applyButtonSchemes`.
+   */
+  fontSizeSchemes: Record<ColorSchemeName, number>;
+  /**
+   * A single universal corner-rounding coefficient (0-0.5, default 0.2) applied to every button
+   * in the group, resolved from the one `roundingCoefficient` Workshop parameter. Unlike
+   * color/font size/shadow, rounding is not part of the three-tier scheme system — there's only
+   * one group-wide value, and it always applies to every button (no per-button opt-out). See
+   * `applyButtonSchemes`.
+   */
+  roundingCoefficient: number;
+  /**
+   * The group's three named shadow coefficients, one per scheme name, resolved from
+   * `primaryShadowCoefficient` / `secondaryShadowCoefficient` / `tertiaryShadowCoefficient`. A
+   * button picks one via its own `shadowScheme` field, independent of the other three scheme
+   * fields — see `applyButtonSchemes`.
+   */
+  shadowSchemes: Record<ColorSchemeName, number>;
 }
 
-/** Internal event emitted by a button up to the group, and by the group up to Widget.tsx. */
+/**
+ * Internal event emitted by a button up to the group, and by the group up to Widget.tsx.
+ *
+ * For a switch button, `press` fires only when the toggle results in the button becoming
+ * active ("selected"); `unpress` fires only when it results in the button becoming inactive
+ * ("deselected"). `change` still fires on every toggle either way (carrying the resulting
+ * `active` value) and remains the source of truth for persisted active state. A momentary
+ * button has no persistent active state, so it always fires `press` on activation and never
+ * fires `unpress`.
+ */
 export type InternalButtonEvent =
   | { type: "hover"; id: string; active: boolean }
   | { type: "hoverEnd"; id: string; active: boolean }
   | { type: "press"; id: string; active: boolean }
+  | { type: "unpress"; id: string; active: boolean }
   | { type: "change"; id: string; active: boolean };
 
 export interface PalantirButtonGroupProps {
@@ -109,7 +224,8 @@ export interface PalantirButtonGroupProps {
   customGapPx: number;
   groupPaddingPx: number;
 
-  buttonHeightPx: number;
+  buttonHeightPx: number | null;
+  buttonVerticalPaddingPx: number;
 
   disabled: boolean;
   activeButtonIds: Set<string>;
@@ -123,7 +239,7 @@ export interface PalantirButtonProps {
   active: boolean;
   groupDisabled: boolean;
 
-  buttonHeightPx: number;
+  buttonHeightPx: number | null;
 
   joinedPosition: JoinedPosition;
 

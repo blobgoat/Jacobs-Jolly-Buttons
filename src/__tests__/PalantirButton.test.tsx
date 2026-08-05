@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PalantirButton } from "../components/PalantirButton.js";
+import { DISABLED_OPACITY } from "../buttonWidget.utils.js";
 import type { InternalButtonEvent, ResolvedButtonConfig } from "../buttonWidget.types.js";
 
 const BASE_CONFIG: ResolvedButtonConfig = {
@@ -22,10 +23,11 @@ const BASE_CONFIG: ResolvedButtonConfig = {
   hoverTextColor: "#ffffff",
   pressedBackgroundColor: "#1e40af",
   pressedTextColor: "#ffffff",
-  activeBackgroundColor: "#1e40af",
-  activeTextColor: "#ffffff",
-  disabledBackgroundColor: "#d1d5db",
-  disabledTextColor: "#4b5563",
+  // "none" here is inert for PalantirButton itself (scheme resolution happens upstream, in
+  // Widget.tsx, before a config ever reaches this component) — set for clarity only.
+  colorScheme: "none",
+  fontSizeScheme: "none",
+  shadowScheme: "none",
   shadowCoefficient: 1,
 };
 
@@ -64,6 +66,14 @@ describe("PalantirButton momentary behavior", () => {
     const user = userEvent.setup();
     await user.click(button);
     expect(onEvent).toHaveBeenCalledWith({ type: "press", id: "test-button", active: false });
+  });
+
+  it("never emits unpress for a momentary button (no persistent active state to deselect)", async () => {
+    const { onEvent } = renderButton();
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "unpress" }));
   });
 
   it("activates on Enter", async () => {
@@ -142,6 +152,24 @@ describe("PalantirButton switch behavior", () => {
     expect(onEvent).toHaveBeenCalledWith({ type: "change", id: "test-button", active: false });
   });
 
+  it("emits press (not unpress) when a switch becomes selected", async () => {
+    const { onEvent } = renderButton({ mode: "switch" }, { active: false });
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    expect(onEvent).toHaveBeenCalledWith({ type: "press", id: "test-button", active: true });
+    expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "unpress" }));
+  });
+
+  it("emits unpress (not press) when a switch becomes deselected", async () => {
+    const { onEvent } = renderButton({ mode: "switch" }, { active: true });
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    expect(onEvent).toHaveBeenCalledWith({ type: "unpress", id: "test-button", active: false });
+    expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "press" }));
+  });
+
   it("reflects an active state via aria-pressed", () => {
     renderButton({ mode: "switch" }, { active: true });
     const button = screen.getByRole("button", { name: "Test Button" });
@@ -159,11 +187,14 @@ describe("PalantirButton switch behavior", () => {
         onEvent={vi.fn()}
       />,
     );
+    const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
     const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
-    // No pointer or keyboard interaction at all — being active alone should keep the visual
-    // surface translated down, matching the shared shadow coefficient's press depth. Not
-    // hovered, so the hover-grow scale factor stays at 1 (no visual growth).
-    expect(surface.style.transform).toBe("translateY(2px) scale(1)");
+    // No pointer or keyboard interaction at all — being active alone should keep the press layer
+    // translated down, matching the shared shadow coefficient's press depth. Not hovered, so the
+    // visual surface's hover-grow scale factor stays at 1 (no visual growth). The two live on
+    // separate elements/transforms so neither affects the other's math.
+    expect(pressLayer.style.transform).toBe("translateY(2px)");
+    expect(surface.style.transform).toBe("scale(1)");
   });
 
   it("springs back to the resting position once an active switch is deactivated", () => {
@@ -176,11 +207,61 @@ describe("PalantirButton switch behavior", () => {
     const { container, rerender } = render(
       <PalantirButton config={{ ...BASE_CONFIG, mode: "switch" }} active={true} {...props} />,
     );
-    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
-    expect(surface.style.transform).toBe("translateY(2px) scale(1)");
+    const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
+    expect(pressLayer.style.transform).toBe("translateY(2px)");
 
     rerender(<PalantirButton config={{ ...BASE_CONFIG, mode: "switch" }} active={false} {...props} />);
-    expect(surface.style.transform).toBe("translateY(0px) scale(1)");
+    expect(pressLayer.style.transform).toBe("translateY(0px)");
+  });
+
+  it("does not release the locally-committed active state on a transient prop match that reverts before the settle window elapses", () => {
+    // Regression test for a real flicker: `pendingActive` used to clear the instant `active`
+    // first agreed with it. If the host's parameter delivery is out of order or bursty around a
+    // click (lag, or another parameter updating at the same time), `active` can transiently agree
+    // for one render and then revert before the real, settled value arrives — clearing on that
+    // first coincidental match let the revert reach the screen as a visible flicker back to the
+    // resting position, right after the button had already committed to looking pressed/active.
+    vi.useFakeTimers();
+    try {
+      const props = {
+        groupDisabled: false,
+        buttonHeightPx: 40,
+        joinedPosition: "single" as const,
+        onEvent: vi.fn(),
+      };
+      const { container, rerender } = render(
+        <PalantirButton config={{ ...BASE_CONFIG, mode: "switch" }} active={false} {...props} />,
+      );
+      const button = screen.getByRole("button", { name: "Test Button" });
+      const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
+
+      // Commit a selection locally. In isolation (no Widget.tsx wiring), the `active` prop stays
+      // put here exactly like it would while a real host round trip is still in flight.
+      fireEvent.pointerDown(button);
+      fireEvent.pointerUp(button);
+      expect(pressLayer.style.transform).toBe("translateY(2px)");
+
+      // A delivery agreeing with the click arrives, but before it's held for a full settle
+      // window, an out-of-order/stale delivery reverts `active` again.
+      rerender(<PalantirButton config={{ ...BASE_CONFIG, mode: "switch" }} active={true} {...props} />);
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      rerender(<PalantirButton config={{ ...BASE_CONFIG, mode: "switch" }} active={false} {...props} />);
+
+      // Still visually held down: the transient match never held long enough to release local
+      // control, so the revert never reached the screen.
+      expect(pressLayer.style.transform).toBe("translateY(2px)");
+
+      // The real, settled value finally arrives and holds for the full window.
+      rerender(<PalantirButton config={{ ...BASE_CONFIG, mode: "switch" }} active={true} {...props} />);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(pressLayer.style.transform).toBe("translateY(2px)");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not push down a momentary button just because 'active' is passed (it always ignores it)", () => {
@@ -194,8 +275,58 @@ describe("PalantirButton switch behavior", () => {
         onEvent={vi.fn()}
       />,
     );
+    const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
+    expect(pressLayer.style.transform).toBe("translateY(0px)");
+  });
+});
+
+describe("PalantirButton color rendering", () => {
+  it("uses the pressed colors (not a separate active color) while a switch is active", () => {
+    const { container } = render(
+      <PalantirButton
+        config={{
+          ...BASE_CONFIG,
+          mode: "switch",
+          pressedBackgroundColor: "#111111",
+          pressedTextColor: "#222222",
+        }}
+        active={true}
+        groupDisabled={false}
+        buttonHeightPx={40}
+        joinedPosition="single"
+        onEvent={vi.fn()}
+      />,
+    );
     const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
-    expect(surface.style.transform).toBe("translateY(0px) scale(1)");
+    expect(surface.style.backgroundColor).toBe("rgb(17, 17, 17)");
+    expect(surface.style.color).toBe("rgb(34, 34, 34)");
+  });
+
+  it("uses the default colors, faded, while disabled -- never a separate disabled color", () => {
+    const { container } = render(
+      <PalantirButton
+        config={{
+          ...BASE_CONFIG,
+          backgroundColor: "#333333",
+          textColor: "#444444",
+        }}
+        active={false}
+        groupDisabled={true}
+        buttonHeightPx={40}
+        joinedPosition="single"
+        onEvent={vi.fn()}
+      />,
+    );
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.backgroundColor).toBe("rgb(51, 51, 51)");
+    expect(surface.style.color).toBe("rgb(68, 68, 68)");
+    expect(surface.style.opacity).toBe(String(DISABLED_OPACITY));
+  });
+
+  it("renders full opacity while enabled", () => {
+    const { container } = renderButton();
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.opacity).toBe("1");
   });
 });
 
@@ -244,14 +375,14 @@ describe("PalantirButton hover-grow", () => {
     const { container } = renderButton();
     const button = screen.getByRole("button", { name: "Test Button" });
     const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
-    expect(surface.style.transform).toBe("translateY(0px) scale(1)");
+    expect(surface.style.transform).toBe("scale(1)");
 
     const user = userEvent.setup();
     await user.hover(button);
-    expect(surface.style.transform).toBe("translateY(0px) scale(1.08)");
+    expect(surface.style.transform).toBe("scale(1.08)");
 
     await user.unhover(button);
-    expect(surface.style.transform).toBe("translateY(0px) scale(1)");
+    expect(surface.style.transform).toBe("scale(1)");
   });
 
   it("does not grow a disabled button on hover", async () => {
@@ -260,7 +391,20 @@ describe("PalantirButton hover-grow", () => {
     const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
     const user = userEvent.setup();
     await user.hover(button);
-    expect(surface.style.transform).toBe("translateY(0px) scale(1)");
+    expect(surface.style.transform).toBe("scale(1)");
+  });
+
+  it("does not affect the press layer's translate when the button grows on hover", async () => {
+    const { container } = renderButton();
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
+    expect(pressLayer.style.transform).toBe("translateY(0px)");
+
+    const user = userEvent.setup();
+    await user.hover(button);
+    // Hovering (scale) must not perturb the press layer's own translateY — they're on separate
+    // elements/transforms specifically so growing never distorts the press-down distance.
+    expect(pressLayer.style.transform).toBe("translateY(0px)");
   });
 
   it("raises the hovered button's stacking order so it paints above its neighbors", async () => {
@@ -271,6 +415,87 @@ describe("PalantirButton hover-grow", () => {
     const user = userEvent.setup();
     await user.hover(button);
     expect(button.style.zIndex).toBe("2");
+  });
+
+  it("keeps hover-grow and press-down fully independent when both are active at once", async () => {
+    // Regression test: hover-scale and press-translate used to be combined into a single
+    // `transform` value on one element, which composes them into one coordinate-space chain —
+    // scaling a translated element (or translating a scaled one) visually distorts the other.
+    // Splitting them onto two separate layers (press layer / visual surface) means each keeps
+    // its single-function transform regardless of what the other is doing.
+    const { container } = renderButton({ mode: "switch" }, { active: true });
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+
+    // Active switch: press layer is translated down, surface isn't scaled yet (not hovered).
+    expect(pressLayer.style.transform).toBe("translateY(2px)");
+    expect(surface.style.transform).toBe("scale(1)");
+
+    const user = userEvent.setup();
+    await user.hover(button);
+
+    // Now hovered too: the surface grows, but the press layer's translate is byte-for-byte the
+    // same single-function value as before — the scale never touched it.
+    expect(pressLayer.style.transform).toBe("translateY(2px)");
+    expect(surface.style.transform).toBe("scale(1.08)");
+  });
+});
+
+describe("PalantirButton width and height", () => {
+  it("fills its wrapper's full width and can shrink below its content size", () => {
+    renderButton();
+    const button = screen.getByRole("button", { name: "Test Button" });
+    expect(button.style.width).toBe("100%");
+    expect(button.style.minWidth).toBe("0px");
+  });
+
+  it("keeps the visible button's exact configured height regardless of external layout space", () => {
+    const { container } = render(
+      <PalantirButton
+        config={BASE_CONFIG}
+        active={false}
+        groupDisabled={false}
+        buttonHeightPx={48}
+        joinedPosition="single"
+        onEvent={vi.fn()}
+      />,
+    );
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.height).toBe("48px");
+    expect(surface.style.width).toBe("100%");
+  });
+
+  // it("fills the hit area's full height when buttonHeightPx is null (auto-fill mode)", () => {
+  //   const { container } = render(
+  //     <PalantirButton
+  //       config={BASE_CONFIG}
+  //       active={false}
+  //       groupDisabled={false}
+  //       buttonHeightPx={null}
+  //       joinedPosition="single"
+  //       onEvent={vi.fn()}
+  //     />,
+  //   );
+  //   const button = screen.getByRole("button", { name: "Test Button" });
+  //   expect(button.style.height).toBe("100%");
+  // });
+
+  it("reserves hover-grow headroom via calc() on the visual surface when buttonHeightPx is null", () => {
+    const { container } = render(
+      <PalantirButton
+        config={BASE_CONFIG}
+        active={false}
+        groupDisabled={false}
+        buttonHeightPx={null}
+        joinedPosition="single"
+        onEvent={vi.fn()}
+      />,
+    );
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    // Not a fixed px value — sized as a fraction of the (now dynamic) hit area's height so
+    // growing by the hover scale factor never exceeds 100% of it.
+    expect(surface.style.height).toContain("calc(100% /");
   });
 });
 

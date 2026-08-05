@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   activeButtonIdsToArray,
+  applyButtonSchemes,
   applyButtonVisibilityAndDisabled,
+  areButtonIdSetsEqual,
   autoQuoteJsonIdentifiers,
   computeInitialActiveButtonIds,
   computeJoinedCornerRadii,
@@ -9,8 +11,10 @@ import {
   DEFAULT_BUTTON_CONFIG,
   DEFAULT_GROUP_CONFIG,
   INVALID_JSON_MESSAGE,
+  NUMERIC_RANGES,
   parseButtonsJson,
   parseGroupConfig,
+  resolveButtonHeightPx,
   resolvePxValue,
   toButtonIdSet,
 } from "../buttonWidget.utils.js";
@@ -91,7 +95,9 @@ describe("parseButtonsJson", () => {
         id: "clamped",
         label: "Clamped",
         fontSizePx: 999,
-        roundingCoefficient: 10,
+        // roundingCoefficient is intentionally NOT set here — it's no longer a per-button field
+        // (see the assertion below); it's always the group's single universal value regardless of
+        // buttonsJson.
         paddingX: -5,
         paddingY: 9999,
         interactiveMarginX: 100,
@@ -102,7 +108,9 @@ describe("parseButtonsJson", () => {
     const result = parseButtonsJson(json);
     const button = result.buttons[0];
     expect(button.fontSizePx).toBe(48);
-    expect(button.roundingCoefficient).toBe(0.5);
+    // roundingCoefficient always resolves to the group's default here (there's no group config
+    // in play in this direct parseButtonsJson call, so it's DEFAULT_GROUP_CONFIG's own default).
+    expect(button.roundingCoefficient).toBe(DEFAULT_GROUP_CONFIG.roundingCoefficient);
     // paddingX/interactiveMarginY are pixel dimensions: a negative input resets them to their
     // default rather than clamping up to the documented minimum (see the negative-px tests
     // below).
@@ -156,6 +164,56 @@ describe("parseButtonsJson", () => {
     const result = parseButtonsJson(json);
     const button = result.buttons[0];
     expect(button.mode).toBe(DEFAULT_BUTTON_CONFIG.mode);
+  });
+
+  it("defaults colorScheme, fontSizeScheme, and shadowScheme to 'none' when unset (keeps the button's own inline fields)", () => {
+    const json = JSON.stringify([{ id: "scheme-default", label: "Scheme Default" }]);
+    const result = parseButtonsJson(json);
+    expect(result.buttons[0].colorScheme).toBe("none");
+    expect(result.buttons[0].fontSizeScheme).toBe("none");
+    expect(result.buttons[0].shadowScheme).toBe("none");
+  });
+
+  it("parses explicit scheme fields opting into a named scheme, independently of each other", () => {
+    const json = JSON.stringify([
+      {
+        id: "mixed-scheme",
+        label: "Mixed",
+        colorScheme: "secondary",
+        fontSizeScheme: "primary",
+        shadowScheme: "secondary",
+      },
+    ]);
+    const result = parseButtonsJson(json);
+    expect(result.buttons[0].colorScheme).toBe("secondary");
+    expect(result.buttons[0].fontSizeScheme).toBe("primary");
+    expect(result.buttons[0].shadowScheme).toBe("secondary");
+  });
+
+  it("falls back to 'none' for an invalid scheme value on any of the three scheme fields", () => {
+    const json = JSON.stringify([
+      {
+        id: "bad-scheme",
+        label: "Bad Scheme",
+        colorScheme: "quaternary",
+        fontSizeScheme: "not-real",
+        shadowScheme: "invalid",
+      },
+    ]);
+    const result = parseButtonsJson(json);
+    expect(result.buttons[0].colorScheme).toBe("none");
+    expect(result.buttons[0].fontSizeScheme).toBe("none");
+    expect(result.buttons[0].shadowScheme).toBe("none");
+  });
+
+  it("ignores any roundingCoefficient/roundingScheme fields in buttonsJson (rounding is not per-button)", () => {
+    const json = JSON.stringify([
+      { id: "rounding-ignored", label: "Rounding Ignored", roundingCoefficient: 0.45, roundingScheme: "primary" },
+    ]);
+    const result = parseButtonsJson(json);
+    const button = result.buttons[0] as ResolvedButtonConfig & Record<string, unknown>;
+    expect(button.roundingCoefficient).toBe(DEFAULT_GROUP_CONFIG.roundingCoefficient);
+    expect(button.roundingScheme).toBeUndefined();
   });
 });
 
@@ -247,6 +305,24 @@ describe("activeButtonIdsToArray", () => {
   });
 });
 
+describe("areButtonIdSetsEqual", () => {
+  it("returns true for two sets with identical content but different instances", () => {
+    expect(areButtonIdSetsEqual(new Set(["a", "b"]), new Set(["b", "a"]))).toBe(true);
+  });
+
+  it("returns true when both sets are empty", () => {
+    expect(areButtonIdSetsEqual(new Set(), new Set())).toBe(true);
+  });
+
+  it("returns false when sizes differ", () => {
+    expect(areButtonIdSetsEqual(new Set(["a"]), new Set(["a", "b"]))).toBe(false);
+  });
+
+  it("returns false when sizes match but contents differ", () => {
+    expect(areButtonIdSetsEqual(new Set(["a", "b"]), new Set(["a", "c"]))).toBe(false);
+  });
+});
+
 describe("computeInitialActiveButtonIds", () => {
   const buttons = [
     makeResolvedButton({ id: "run", mode: "momentary" }),
@@ -289,10 +365,9 @@ function makeResolvedButton(overrides: Partial<ResolvedButtonConfig>): ResolvedB
     hoverTextColor: "#ffffff",
     pressedBackgroundColor: "#1e40af",
     pressedTextColor: "#ffffff",
-    activeBackgroundColor: "#1e40af",
-    activeTextColor: "#ffffff",
-    disabledBackgroundColor: "#d1d5db",
-    disabledTextColor: "#4b5563",
+    colorScheme: "none",
+    fontSizeScheme: "none",
+    shadowScheme: "none",
     shadowCoefficient: 1,
     ...overrides,
   };
@@ -357,6 +432,196 @@ describe("parseGroupConfig", () => {
     expect(config.buttonHeightPx).toBe(DEFAULT_GROUP_CONFIG.buttonHeightPx);
     expect(config.customGapPx).toBe(DEFAULT_GROUP_CONFIG.customGapPx);
   });
+
+  it("defaults buttonHeightPx to null (auto-fill) when never configured", () => {
+    const config = parseGroupConfig({});
+    expect(config.buttonHeightPx).toBeNull();
+    expect(config.buttonHeightPx).toBe(DEFAULT_GROUP_CONFIG.buttonHeightPx);
+  });
+
+  it("clamps a large buttonHeightPx to the raised 240px ceiling instead of the old 96px one", () => {
+    expect(parseGroupConfig({ buttonHeightPx: 9999 }).buttonHeightPx).toBe(240);
+    expect(parseGroupConfig({ buttonHeightPx: 150 }).buttonHeightPx).toBe(150);
+  });
+
+  it("defaults buttonVerticalPaddingPx to 0 when not configured", () => {
+    const config = parseGroupConfig({});
+    expect(config.buttonVerticalPaddingPx).toBe(0);
+    expect(config.buttonVerticalPaddingPx).toBe(DEFAULT_GROUP_CONFIG.buttonVerticalPaddingPx);
+  });
+
+  it("preserves an explicit buttonVerticalPaddingPx of 0 rather than falling back via truthiness", () => {
+    const config = parseGroupConfig({ buttonVerticalPaddingPx: 0 });
+    expect(config.buttonVerticalPaddingPx).toBe(0);
+  });
+
+  it("clamps buttonVerticalPaddingPx to the documented 0-64 range", () => {
+    expect(parseGroupConfig({ buttonVerticalPaddingPx: 999 }).buttonVerticalPaddingPx).toBe(64);
+    expect(parseGroupConfig({ buttonVerticalPaddingPx: 32 }).buttonVerticalPaddingPx).toBe(32);
+  });
+
+  it("treats a negative buttonVerticalPaddingPx as 'use default' like the other *Px group fields", () => {
+    expect(parseGroupConfig({ buttonVerticalPaddingPx: -1 }).buttonVerticalPaddingPx).toBe(
+      DEFAULT_GROUP_CONFIG.buttonVerticalPaddingPx,
+    );
+  });
+
+  it("defaults every color scheme's colors and font size when unconfigured", () => {
+    const config = parseGroupConfig({});
+    expect(config.colorSchemes).toEqual(DEFAULT_GROUP_CONFIG.colorSchemes);
+    expect(config.fontSizeSchemes).toEqual(DEFAULT_GROUP_CONFIG.fontSizeSchemes);
+  });
+
+  it("resolves each scheme's colors from its own flat parameters, independently of the others", () => {
+    const config = parseGroupConfig({
+      primaryBackgroundColor: "#111111",
+      primaryHoverTextColor: "#222222",
+      secondaryPressedBackgroundColor: "#333333",
+      tertiaryTextColor: "#444444",
+    });
+    expect(config.colorSchemes.primary.backgroundColor).toBe("#111111");
+    expect(config.colorSchemes.primary.hoverTextColor).toBe("#222222");
+    // Unconfigured fields on a scheme that had *some* fields set still fall back individually.
+    expect(config.colorSchemes.primary.textColor).toBe(DEFAULT_GROUP_CONFIG.colorSchemes.primary.textColor);
+    expect(config.colorSchemes.secondary.pressedBackgroundColor).toBe("#333333");
+    expect(config.colorSchemes.tertiary.textColor).toBe("#444444");
+  });
+
+  it("clamps each scheme's font size to the 8-48 range and defaults to 14 when unconfigured", () => {
+    const config = parseGroupConfig({ primaryFontSizePx: 999, secondaryFontSizePx: -1 });
+    expect(config.fontSizeSchemes.primary).toBe(48);
+    expect(config.fontSizeSchemes.secondary).toBe(DEFAULT_GROUP_CONFIG.fontSizeSchemes.secondary);
+    expect(config.fontSizeSchemes.tertiary).toBe(DEFAULT_GROUP_CONFIG.fontSizeSchemes.tertiary);
+  });
+
+  it("defaults every scheme's shadow coefficient, and the universal roundingCoefficient, when unconfigured", () => {
+    const config = parseGroupConfig({});
+    expect(config.roundingCoefficient).toBe(DEFAULT_GROUP_CONFIG.roundingCoefficient);
+    expect(config.shadowSchemes).toEqual(DEFAULT_GROUP_CONFIG.shadowSchemes);
+  });
+
+  it("resolves the single universal roundingCoefficient from its one flat parameter, clamped to 0-0.5 (negative clamps to 0, not the default)", () => {
+    expect(parseGroupConfig({ roundingCoefficient: 0.35 }).roundingCoefficient).toBe(0.35);
+    expect(parseGroupConfig({ roundingCoefficient: 10 }).roundingCoefficient).toBe(0.5);
+    expect(parseGroupConfig({ roundingCoefficient: -1 }).roundingCoefficient).toBe(0);
+  });
+
+  it("resolves each scheme's shadow coefficient from its own flat parameter, clamped to 0-4, negative clamps to 0 (not the default)", () => {
+    const config = parseGroupConfig({
+      primaryShadowCoefficient: 3,
+      secondaryShadowCoefficient: 99,
+      tertiaryShadowCoefficient: -1,
+    });
+    expect(config.shadowSchemes.primary).toBe(3);
+    expect(config.shadowSchemes.secondary).toBe(4);
+    // shadowCoefficient is a unitless coefficient, not a pixel dimension, so a negative value
+    // clamps to the minimum (0) here too, consistent with the per-button field of the same name.
+    expect(config.shadowSchemes.tertiary).toBe(0);
+  });
+});
+
+describe("applyButtonSchemes", () => {
+  it("overrides a button's inline colors, font size, and shadow with its chosen schemes", () => {
+    const groupConfig = parseGroupConfig({
+      primaryBackgroundColor: "#101010",
+      primaryTextColor: "#fefefe",
+      primaryHoverBackgroundColor: "#202020",
+      primaryHoverTextColor: "#efefef",
+      primaryPressedBackgroundColor: "#303030",
+      primaryPressedTextColor: "#dfdfdf",
+      primaryFontSizePx: 22,
+      primaryShadowCoefficient: 3,
+    });
+    const button = makeResolvedButton({
+      backgroundColor: "#ffffff",
+      textColor: "#000000",
+      fontSizePx: 10,
+      shadowCoefficient: 0.5,
+    });
+    const [resolved] = applyButtonSchemes(
+      [{ ...button, colorScheme: "primary", fontSizeScheme: "primary", shadowScheme: "primary" }],
+      groupConfig,
+    );
+    expect(resolved.backgroundColor).toBe("#101010");
+    expect(resolved.textColor).toBe("#fefefe");
+    expect(resolved.hoverBackgroundColor).toBe("#202020");
+    expect(resolved.hoverTextColor).toBe("#efefef");
+    expect(resolved.pressedBackgroundColor).toBe("#303030");
+    expect(resolved.pressedTextColor).toBe("#dfdfdf");
+    expect(resolved.fontSizePx).toBe(22);
+    expect(resolved.shadowCoefficient).toBe(3);
+  });
+
+  it("leaves a button's own inline fields untouched, per axis, when that axis's scheme is 'none'", () => {
+    const groupConfig = parseGroupConfig({
+      primaryBackgroundColor: "#101010",
+      primaryFontSizePx: 22,
+      primaryShadowCoefficient: 3,
+    });
+    const button = makeResolvedButton({
+      backgroundColor: "#ffffff",
+      fontSizePx: 10,
+      shadowCoefficient: 0.5,
+      colorScheme: "none",
+      fontSizeScheme: "none",
+      shadowScheme: "none",
+    });
+    const [resolved] = applyButtonSchemes([button], groupConfig);
+    expect(resolved.backgroundColor).toBe("#ffffff");
+    expect(resolved.fontSizePx).toBe(10);
+    expect(resolved.shadowCoefficient).toBe(0.5);
+  });
+
+  it("resolves all three scheme axes independently -- a button can mix schemes across them", () => {
+    const groupConfig = parseGroupConfig({
+      secondaryBackgroundColor: "#202020",
+      tertiaryFontSizePx: 30,
+      secondaryShadowCoefficient: 2,
+    });
+    const button = makeResolvedButton({
+      backgroundColor: "#ffffff",
+      fontSizePx: 10,
+      shadowCoefficient: 0.5,
+      colorScheme: "secondary",
+      fontSizeScheme: "tertiary",
+      shadowScheme: "secondary",
+    });
+    const [resolved] = applyButtonSchemes([button], groupConfig);
+    expect(resolved.backgroundColor).toBe("#202020");
+    expect(resolved.fontSizePx).toBe(30);
+    expect(resolved.shadowCoefficient).toBe(2);
+  });
+
+  it("always overrides a button's own roundingCoefficient with the group's single universal value, regardless of the other axes' schemes", () => {
+    const groupConfig = parseGroupConfig({ roundingCoefficient: 0.45 });
+    const buttonWithSchemes = makeResolvedButton({
+      roundingCoefficient: 0.1,
+      colorScheme: "primary",
+      fontSizeScheme: "primary",
+      shadowScheme: "primary",
+    });
+    const buttonWithNoSchemes = makeResolvedButton({ roundingCoefficient: 0.1 });
+    const [resolvedWithSchemes] = applyButtonSchemes([buttonWithSchemes], groupConfig);
+    const [resolvedWithNoSchemes] = applyButtonSchemes([buttonWithNoSchemes], groupConfig);
+    expect(resolvedWithSchemes.roundingCoefficient).toBe(0.45);
+    expect(resolvedWithNoSchemes.roundingCoefficient).toBe(0.45);
+  });
+
+  it("resolves each button in the array independently", () => {
+    const groupConfig = parseGroupConfig({
+      primaryBackgroundColor: "#111111",
+      secondaryBackgroundColor: "#222222",
+    });
+    const buttons = [
+      makeResolvedButton({ id: "a", colorScheme: "primary" }),
+      makeResolvedButton({ id: "b", colorScheme: "secondary" }),
+      makeResolvedButton({ id: "c", backgroundColor: "#custom", colorScheme: "none" }),
+    ];
+    const resolved = applyButtonSchemes(buttons, groupConfig);
+    expect(resolved.find((b) => b.id === "a")?.backgroundColor).toBe("#111111");
+    expect(resolved.find((b) => b.id === "b")?.backgroundColor).toBe("#222222");
+    expect(resolved.find((b) => b.id === "c")?.backgroundColor).toBe("#custom");
+  });
 });
 
 describe("resolvePxValue", () => {
@@ -377,6 +642,33 @@ describe("resolvePxValue", () => {
   it("treats any negative value as an explicit 'use default' sentinel, not a clamp-to-minimum", () => {
     expect(resolvePxValue(-1, 0, 100, 42)).toBe(42);
     expect(resolvePxValue(-9999, 0, 100, 42)).toBe(42);
+  });
+});
+
+describe("resolveButtonHeightPx", () => {
+  it("returns null (auto-fill) when never configured", () => {
+    expect(resolveButtonHeightPx(undefined)).toBeNull();
+    expect(resolveButtonHeightPx(null)).toBeNull();
+  });
+
+  it("returns null (auto-fill) for a negative value", () => {
+    expect(resolveButtonHeightPx(-1)).toBeNull();
+    expect(resolveButtonHeightPx(-9999)).toBeNull();
+  });
+
+  it("returns null (auto-fill) for NaN / non-numeric values", () => {
+    expect(resolveButtonHeightPx(NaN)).toBeNull();
+    expect(resolveButtonHeightPx("not-a-number")).toBeNull();
+  });
+
+  it("clamps a non-negative value into the documented 28-240 range", () => {
+    expect(resolveButtonHeightPx(1)).toBe(NUMERIC_RANGES.buttonHeightPx.min);
+    expect(resolveButtonHeightPx(9999)).toBe(NUMERIC_RANGES.buttonHeightPx.max);
+    expect(resolveButtonHeightPx(48)).toBe(48);
+  });
+
+  it("keeps the documented range at 28-240", () => {
+    expect(NUMERIC_RANGES.buttonHeightPx).toEqual({ min: 28, max: 240 });
   });
 });
 

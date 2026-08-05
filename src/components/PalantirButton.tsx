@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PalantirButtonProps } from "../buttonWidget.types.js";
 import {
+  AUTO_HEIGHT_ANIMATION_BASIS_PX,
   computeBorderRadiusPx,
   computeEffectiveInteractiveMargins,
   computeJoinedCornerRadii,
   computeShadows,
+  DISABLED_OPACITY,
   HOVER_SCALE,
+  PENDING_ACTIVE_SETTLE_MS,
   ShadowSet,
 } from "../buttonWidget.utils.js";
 
@@ -16,6 +19,10 @@ type VisualState = "disabled" | "pressed" | "activeHovered" | "active" | "hovere
  * `<button>`, which owns pointer/keyboard/focus/disabled semantics and the transparent
  * interactive margins) and a visual surface (an inner `<span>` that owns background,
  * radius, shadow, and the pressed translation). Only the visual surface moves when pressed.
+ *
+ * `buttonHeightPx === null` means "auto-fill" mode: both layers size themselves off the
+ * percentage height of their (now dynamically-sized) ancestors instead of an explicit px value —
+ * see `PalantirButtonGroup` for how the ancestor chain is made to have a real, bounded height.
  */
 export const PalantirButton: React.FC<PalantirButtonProps> = ({
   config,
@@ -35,14 +42,31 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   // button has neither a live press nor the not-yet-arrived active state, and it visibly springs
   // back up before immediately being pushed back down once `active` catches up. `pendingActive`
   // holds the click's known outcome locally so the pressed-down look never has a gap to spring
-  // through; it's cleared once the prop confirms the same value.
+  // through.
   const [pendingActive, setPendingActive]: [boolean | null, React.Dispatch<React.SetStateAction<boolean | null>>] =
     useState<boolean | null>(null);
 
+  // Releasing `pendingActive` the instant `propActive` first agrees with it is not safe: the host
+  // round trip that carries this click's outcome back isn't guaranteed to be the only parameter
+  // delivery in flight around a click, and isn't guaranteed to arrive in order relative to others
+  // (an unrelated parameter update, or a stale/queued re-delivery of `parameters.values` racing
+  // the real echo). If one of those happens to carry `propActive` through the *correct* value only
+  // transiently — agreeing with `pendingActive` for exactly one render before a still-in-flight,
+  // out-of-order delivery reverts it again — clearing on that first coincidental match hands control
+  // back to `propActive` right as it's about to swing the wrong way, which reads as the press/active
+  // look (and its color) flickering or reverting right after the click, worse specifically under the
+  // conditions that make out-of-order delivery more likely: host lag, or other parameters updating
+  // around the same time. Instead, only release local control once `propActive` has agreed with
+  // `pendingActive` continuously for a full settle window with no reversal in between — any renewed
+  // disagreement during that window cancels the pending release and starts the wait over.
   useEffect(() => {
-    if (pendingActive !== null && propActive === pendingActive) {
-      setPendingActive(null);
+    if (pendingActive === null || propActive !== pendingActive) {
+      return;
     }
+    const timeoutId = window.setTimeout(() => {
+      setPendingActive(null);
+    }, PENDING_ACTIVE_SETTLE_MS);
+    return () => window.clearTimeout(timeoutId);
   }, [propActive, pendingActive]);
 
   const effectiveActive: boolean = pendingActive !== null ? pendingActive : propActive;
@@ -79,9 +103,15 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
   }, [isDisabled]);
 
   /**
-   * Fires the press/change events (and, for a switch, the local `pendingActive` override) for an
-   * activation of this button. Called from `handlePointerUp` for pointer/touch interactions and
-   * from `handleClick` for keyboard-originated ones (see `pointerCommittedRef`).
+   * Fires the press/unpress/change events (and, for a switch, the local `pendingActive`
+   * override) for an activation of this button. Called from `handlePointerUp` for pointer/touch
+   * interactions and from `handleClick` for keyboard-originated ones (see `pointerCommittedRef`).
+   *
+   * For a switch, `press` fires only when this activation selects it (newActive === true);
+   * `unpress` fires only when it deselects it (newActive === false) — the two are mutually
+   * exclusive per activation. `change` still fires every time either way, carrying the resulting
+   * `active` value, and remains what hosts should use to track persisted state. A momentary
+   * button has no persistent active state, so it always fires `press` and never `unpress`.
    */
   const commitActivation: () => void = useCallback(() => {
     if (isDisabled) {
@@ -94,7 +124,11 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       // through the host as an updated `active` prop — see the comment on `pendingActive`'s
       // declaration.
       setPendingActive(newActive);
-      onEvent({ type: "press", id: config.id, active: newActive });
+      if (newActive) {
+        onEvent({ type: "press", id: config.id, active: newActive });
+      } else {
+        onEvent({ type: "unpress", id: config.id, active: newActive });
+      }
       onEvent({ type: "change", id: config.id, active: newActive });
     } else {
       onEvent({ type: "press", id: config.id, active: false });
@@ -270,18 +304,17 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
             ? "hovered"
             : "default";
 
+  // There's no separate "active" or "disabled" color set anymore (per-button or per-scheme):
+  // active reuses the pressed colors (a switch that's on is meant to look "pushed in," the same
+  // as a momentary button mid-press — see `isHeldDown` above), and disabled always uses the
+  // normal default/unpressed colors, faded via `DISABLED_OPACITY` on the visual surface below,
+  // rather than a distinct color pair.
   const { backgroundColor: stateBackgroundColor, textColor: stateTextColor }: { backgroundColor: string; textColor: string } = useMemo(() => {
     if (isDisabled) {
-      return {
-        backgroundColor: config.disabledBackgroundColor,
-        textColor: config.disabledTextColor,
-      };
+      return { backgroundColor: config.backgroundColor, textColor: config.textColor };
     }
-    if (pressedVisual) {
+    if (pressedVisual || effectiveActive) {
       return { backgroundColor: config.pressedBackgroundColor, textColor: config.pressedTextColor };
-    }
-    if (effectiveActive) {
-      return { backgroundColor: config.activeBackgroundColor, textColor: config.activeTextColor };
     }
     if (isHovered) {
       return { backgroundColor: config.hoverBackgroundColor, textColor: config.hoverTextColor };
@@ -299,8 +332,12 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
         ? shadows.hover
         : shadows.resting;
 
+  // When buttonHeightPx is null (auto-fill mode), the real rendered height isn't known
+  // synchronously — the browser resolves it from available space, not from a measurement we can
+  // read here. Corner rounding falls back to a representative constant in that case; it's a
+  // cosmetic approximation only (see AUTO_HEIGHT_ANIMATION_BASIS_PX).
   const radiusPx: number = useMemo(
-    () => computeBorderRadiusPx(buttonHeightPx, config.roundingCoefficient),
+    () => computeBorderRadiusPx(buttonHeightPx ?? AUTO_HEIGHT_ANIMATION_BASIS_PX, config.roundingCoefficient),
     [buttonHeightPx, config.roundingCoefficient],
   );
   const radii: { topLeft: number; topRight: number; bottomRight: number; bottomLeft: number } = useMemo(
@@ -327,10 +364,21 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
 
   const hitAreaStyle: React.CSSProperties = {
     position: "relative",
-    display: "inline-flex",
+    display: "flex",
     alignItems: "center",
     justifyContent: "center",
     boxSizing: "border-box",
+    // Fills its layout wrapper's equal-width column exactly — the wrapper (in
+    // PalantirButtonGroup) is what actually divides the group's width; this button always
+    // occupies 100% of whatever width that wrapper resolves to, and can shrink below its content
+    // size (min-width: 0) instead of forcing the column wider.
+    width: "100%",
+    minWidth: "0px",
+    // When buttonHeightPx is auto (null), the hit area fills whatever height the layout wrapper
+    // ends up with (which itself is bounded by the widget's real available space — see
+    // PalantirButtonGroup). When it's a fixed number, the hit area stays content-sized (wrapping
+    // the visual surface's explicit height below), unchanged from before.
+    height: buttonHeightPx === null ? "100%" : undefined,
     padding: `${margins.top}px ${margins.right}px ${margins.bottom}px ${margins.left}px`,
     margin: 0,
     border: "none",
@@ -339,7 +387,6 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     WebkitTapHighlightColor: "transparent",
     userSelect: "none",
     font: "inherit",
-    flexShrink: 0,
     // Raised only while hovered, so the button's own visual surface (which grows via a
     // transform below) paints above its neighbors in the row instead of being overlapped by
     // them — this is purely a paint-order change and never affects any element's layout box or
@@ -347,20 +394,52 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     zIndex: isHovered ? 2 : 0,
   };
 
-  // Hover grows the button in place (never affects layout — see zIndex/hitAreaStyle above and
-  // the group container's reserved animation buffer); an active/pressed switch or a momentary
-  // press stays pushed down. Both are ordinary CSS transforms, so they compose independently and
-  // never reflow sibling buttons.
+  // Hover-grow and press-down are each an ordinary CSS transform, but they used to be combined
+  // into a single `transform` value on one element (`translateY(...) scale(...)`). CSS composes
+  // multiple functions in one `transform` into a *single* coordinate-space chain, not two
+  // independent ones — scaling and translating on the same element interact: growing the button
+  // on hover visibly changes how far the press-down translate reads as moving it, and vice versa,
+  // so pressing a hovered button (or hovering a pressed one) looked subtly different from doing
+  // either alone. Splitting them across two nested layers — an outer "press layer" that only ever
+  // translates, and the inner visual surface that only ever scales — makes each transform live on
+  // its own element with its own coordinate space, so neither can influence the other's math; the
+  // press layer moving the whole (already independently-scaled) surface as a rigid unit.
   const hoverScaleTransform = !isDisabled && isHovered ? `scale(${HOVER_SCALE})` : "scale(1)";
   const pressTranslateTransform = isHeldDown ? `translateY(${shadows.translateYPx}px)` : "translateY(0px)";
+
+  // Outer layer: press/active translate only. Purely a positioning box — no background, radius,
+  // shadow, or content styling of its own — sized to exactly the space the visual surface used to
+  // occupy directly inside the hit area, so introducing it changes no visible geometry.
+  const pressLayerStyle: React.CSSProperties = {
+    position: "relative",
+    boxSizing: "border-box",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    minWidth: "0px",
+    height: buttonHeightPx === null ? "100%" : buttonHeightPx,
+    transform: pressTranslateTransform,
+    transition: "transform 120ms ease-out",
+  };
 
   const visualSurfaceStyle: React.CSSProperties = {
     position: "relative",
     boxSizing: "border-box",
-    display: "inline-flex",
+    display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    height: buttonHeightPx,
+    // Fills the press layer's full width so the visible background/border-radius/shadow span the
+    // entire equal-width column, not just the label's natural width. In fixed mode, height stays
+    // exactly `buttonHeightPx` regardless — buttonVerticalPaddingPx (applied one level up, on the
+    // layout wrapper) never affects this value. In auto mode (buttonHeightPx === null), the
+    // surface intentionally fills slightly *less* than the press layer's full height —
+    // `100% / HOVER_SCALE` — reserving exactly the headroom the hover-grow transform needs so
+    // growing by HOVER_SCALE on hover brings it back to exactly 100%, never past it, with no
+    // fixed px buffer needed (the press layer's own height is already dynamic).
+    width: "100%",
+    minWidth: "0px",
+    height: buttonHeightPx === null ? `calc(100% / ${HOVER_SCALE})` : buttonHeightPx,
     padding: `${config.paddingY}px ${config.paddingX}px`,
     borderTopLeftRadius: radii.topLeft,
     borderTopRightRadius: radii.topRight,
@@ -372,17 +451,25 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     fontSize: config.fontSizePx,
     fontWeight: 500,
     boxShadow: currentShadow,
-    transform: `${pressTranslateTransform} ${hoverScaleTransform}`,
+    // Scale only — no translate here anymore (see the press layer above).
+    transform: hoverScaleTransform,
     transformOrigin: "center center",
+    // Disabled has no color pair of its own — it's always the normal default/unpressed
+    // background/text (stateBackgroundColor/stateTextColor already resolve to those when
+    // isDisabled), faded via opacity instead. This reads as "disabled" regardless of the
+    // button's actual colors and needs no separate configuration.
+    opacity: isDisabled ? DISABLED_OPACITY : 1,
     // background-color/color are included here (not just transform/box-shadow) so a visual-state
     // change — e.g. pressed -> active, where the two colors can be very different (a light
     // "pressed" tone snapping straight to a near-black "active" tone) — fades instead of
-    // instantly snapping, which otherwise reads as a flash/flicker.
+    // instantly snapping, which otherwise reads as a flash/flicker. opacity is included for the
+    // same reason when toggling disabled on/off.
     transition: [
       "transform 120ms ease-out",
       "box-shadow 120ms ease-out",
       "background-color 120ms ease-out",
       "color 120ms ease-out",
+      "opacity 120ms ease-out",
     ].join(", "),
     whiteSpace: "nowrap",
   };
@@ -416,8 +503,10 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
       onKeyUp={handleKeyUp}
       onClick={handleClick}
     >
-      <span className="palantir-button-visual-surface" style={visualSurfaceStyle}>
-        <span style={contentStyle}>{contentChildren}</span>
+      <span className="palantir-button-press-layer" style={pressLayerStyle}>
+        <span className="palantir-button-visual-surface" style={visualSurfaceStyle}>
+          <span style={contentStyle}>{contentChildren}</span>
+        </span>
       </span>
     </button>
   );

@@ -1,5 +1,14 @@
+/* `height: 100%` on any element only resolves to real pixels if *every* ancestor back to the
+   real viewport/host container has a definite height — unlike width, height does not default to
+   "fill the parent," it defaults to "auto" (size to content) at every level. `html`/`body` never
+   had an explicit height here, and `#root` (outside React's control, so it can't be styled via
+   inline styles) had no rule at all — so Widget.tsx's `height: 100%` on its root Flex, and in
+   turn PalantirButtonGroup's row (`flex: 1 1 auto`) and every `buttonHeightPx: null` "auto-fill"
+   button, had nothing real to resolve against and silently fell back to auto/content sizing.
+   This re-establishes that chain from the real viewport/host container down to `#root`. */
 html, body {
     margin: 0;
+    height: 100%;
     /* The widget's own containers (Widget.tsx's root Flex, PalantirButtonGroup's row) already
        set overflow-y: hidden with a reserved padding buffer so hover/press animations never
        need to scroll internally. But that only has an effect if this page itself doesn't also
@@ -9,7 +18,12 @@ html, body {
     overflow-y: hidden;
 }
 
+#root {
+    height: 100%;
+}
+
 .radix-themes:where([data-is-root-theme='true']) {
+    height: 100%;
     min-height: 0;
     @supports(min-height: 100dvh) {
         min-height: 0;
@@ -32,8 +46,17 @@ html, body {
     transition: background-color 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out, transform 120ms ease-out;
 }
 
+/* Wraps .palantir-button-visual-surface and owns only the press/active translateY — the surface
+   owns only the hover-grow scale. Splitting them across two layers keeps each transform in its
+   own coordinate space so scaling never distorts how far the press-down translate visually moves
+   (and vice versa) the way combining both into one `transform` on a single element would. */
+.palantir-button-press-layer {
+    transition: transform 120ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .palantir-button-visual-surface {
+    .palantir-button-visual-surface,
+    .palantir-button-press-layer {
         transition-duration: 0.01ms;
         transform: none !important;
     }
