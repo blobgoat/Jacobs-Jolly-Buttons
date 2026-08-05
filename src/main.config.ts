@@ -45,11 +45,9 @@ export default defineConfig({
       type: "boolean",
     },
     infoOnColorScheme: {
-      displayName: "Info: colorScheme (primary|secondary|tertiary|none, default none) picks a color scheme.",
-      type: "boolean",
-    },
-    infoOnFontSizeScheme: {
-      displayName: "Info: fontSizeScheme (primary|secondary|tertiary|none, default none) picks a font size.",
+      displayName:
+        "Info: colorScheme/fontSizeScheme — primary|secondary|tertiary|none, default none, " +
+        "pick a scheme.",
       type: "boolean",
     },
     infoOnShadowScheme: {
@@ -79,6 +77,16 @@ export default defineConfig({
       displayName: "Layout mode (joined | space-between | custom-gap)",
       type: "string",
     },
+    orientation: {
+      displayName: "Orientation: row (horizontal) or column (vertical stack), default row",
+      type: "string",
+    },
+    selectionMode: {
+      displayName:
+        "Selection mode: independent (default) | single (radio) | single-required (radio, " +
+        "always 1 active)",
+      type: "string",
+    },
     customGapPx: {
       displayName: "Custom gap (px) — negative resets to default (8)",
       type: "number",
@@ -87,6 +95,10 @@ export default defineConfig({
       displayName: "Group padding (px) — negative resets to default (0)",
       type: "number",
     },
+    // Blank/negative ("fill available height") applies along whichever axis orientation makes
+    // the "main" one — buttons equally share and grow into that space in both orientations. A
+    // fixed number in orientation "column" is what lets the stack extend past the widget's own
+    // available height instead of being squeezed to fit — see orientation above.
     buttonHeightPx: {
       displayName:
         "Button height (px, clamped 240) — blank or negative to fill " +
@@ -229,8 +241,8 @@ export default defineConfig({
     },
     infoOnDisabledButtonIds: {
       displayName:
-        "Info: disabledButtonIdsArray combines with each button's own \"disabled\" field; " +
-        "never re-enables.",
+        "Info: disabledButtonIdsArray force-disables, never re-enables; hiddenButtonIdsArray " +
+        "hides.",
       type: "boolean",
     },
     hiddenButtonIdsArray: {
@@ -238,11 +250,6 @@ export default defineConfig({
         'Hidden button IDs. Not rendered but states are saved though.',
       type: "array",
       subType: "string",
-    },
-    infoOnHiddenButtonIds: {
-      displayName:
-        "Info: a hidden switch's active state is preserved and restored once it's un-hidden.",
-      type: "boolean",
     },
 
     // --- Bridge / output parameters ------------------------------------------

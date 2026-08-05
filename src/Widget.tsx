@@ -10,6 +10,7 @@ import {
   areButtonIdSetsEqual,
   AUTO_HEIGHT_ANIMATION_BASIS_PX,
   computeInitialActiveButtonIds,
+  computeNextActiveButtonIds,
   DEFAULT_BUTTONS_JSON,
   NO_VALID_BUTTONS_MESSAGE,
   parseButtonsJson,
@@ -52,6 +53,8 @@ export const Widget: React.FC = () => {
     () =>
       parseGroupConfig({
         layoutMode: parameters.values.layoutMode,
+        orientation: parameters.values.orientation,
+        selectionMode: parameters.values.selectionMode,
         customGapPx: parameters.values.customGapPx,
         groupPaddingPx: parameters.values.groupPaddingPx,
         buttonHeightPx: parameters.values.buttonHeightPx,
@@ -90,6 +93,8 @@ export const Widget: React.FC = () => {
       }),
     [
       parameters.values.layoutMode,
+      parameters.values.orientation,
+      parameters.values.selectionMode,
       parameters.values.customGapPx,
       parameters.values.groupPaddingPx,
       parameters.values.buttonHeightPx,
@@ -168,9 +173,13 @@ export const Widget: React.FC = () => {
     if (isLoading) {
       return;
     }
-    const reconciled = computeInitialActiveButtonIds(buttons, parameters.values.activeButtonIdsJson);
+    const reconciled = computeInitialActiveButtonIds(
+      buttons,
+      parameters.values.activeButtonIdsJson,
+      groupConfig.selectionMode,
+    );
     setActiveButtonIds((current) => (areButtonIdSetsEqual(current, reconciled) ? current : reconciled));
-  }, [isLoading, buttons, parameters.values.activeButtonIdsJson]);
+  }, [isLoading, buttons, parameters.values.activeButtonIdsJson, groupConfig.selectionMode]);
 
   const handleButtonEvent = useCallback(
     (event: InternalButtonEvent) => {
@@ -219,11 +228,14 @@ export const Widget: React.FC = () => {
       }
 
       // "change"
-      const nextActiveButtonIds = new Set(activeButtonIds);
-      if (event.active) {
-        nextActiveButtonIds.add(event.id);
-      } else {
-        nextActiveButtonIds.delete(event.id);
+      const nextActiveButtonIds = computeNextActiveButtonIds(activeButtonIds, event, groupConfig.selectionMode);
+      if (areButtonIdSetsEqual(nextActiveButtonIds, activeButtonIds)) {
+        // "single-required" refusing a deactivation (see computeNextActiveButtonIds) is the only
+        // way this is reachable — PalantirButton's commitActivation already blocks the click
+        // itself from firing this event in the first place for a single-required group's sole
+        // active button. Nothing about the group's active state actually changed, so treat this
+        // as a genuine no-op: no re-render, no event emitted.
+        return;
       }
       setActiveButtonIds(nextActiveButtonIds);
 
@@ -236,7 +248,7 @@ export const Widget: React.FC = () => {
         },
       });
     },
-    [emitEvent, activeButtonIds],
+    [emitEvent, activeButtonIds, groupConfig.selectionMode],
   );
 
   return (
@@ -244,7 +256,14 @@ export const Widget: React.FC = () => {
       <Flex
         direction="column"
         align="center"
-        justify="center"
+        // In "row" orientation the button group is always bounded to exactly this available
+        // space (see PalantirButtonGroup), so it never overflows — "center" keeps the prior,
+        // unaffected look. In "column" orientation the stack is deliberately content-sized and
+        // can grow taller than this box (see PalantirButtonGroup's containerStyle.flex), so it's
+        // anchored to the top ("start") instead: centering content that might scroll would look
+        // odd, cutting content evenly off both ends rather than letting the user scroll down from
+        // a stable top edge.
+        justify={groupConfig.orientation === "column" ? "start" : "center"}
         p="2"
         style={{
           width: "100%",
@@ -252,12 +271,17 @@ export const Widget: React.FC = () => {
           minWidth: "0px",
           minHeight: "0px",
           boxSizing: "border-box",
-          overflowY: "hidden",
+          // "row" orientation's button group is always bounded to exactly this available space,
+          // so nothing can ever overflow it — "hidden" is just a safety net. "column"
+          // orientation intentionally lets the button stack grow taller than this box so it can
+          // "extend" past a short widget tile instead of squishing every button — "auto" means
+          // that excess is reachable by scrolling instead of being silently clipped away.
+          overflowY: groupConfig.orientation === "column" ? "auto" : "hidden",
         }}
       >
         {isLoading ? (
           <Skeleton>
-            <Flex gap="2" align="center">
+            <Flex gap="2" align="center" direction={groupConfig.orientation === "column" ? "column" : "row"}>
               <Box style={{ width: 120, height: skeletonHeightPx, borderRadius: 8 }} />
               <Box style={{ width: 120, height: skeletonHeightPx, borderRadius: 8 }} />
               <Box style={{ width: 120, height: skeletonHeightPx, borderRadius: 8 }} />
@@ -294,6 +318,8 @@ export const Widget: React.FC = () => {
             <PalantirButtonGroup
               buttons={displayButtons}
               layoutMode={groupConfig.layoutMode}
+              orientation={groupConfig.orientation}
+              selectionMode={groupConfig.selectionMode}
               customGapPx={groupConfig.customGapPx}
               groupPaddingPx={groupConfig.groupPaddingPx}
               buttonHeightPx={groupConfig.buttonHeightPx}

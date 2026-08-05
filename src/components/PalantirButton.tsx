@@ -22,13 +22,27 @@ type VisualState = "disabled" | "pressed" | "activeHovered" | "active" | "hovere
  *
  * `buttonHeightPx === null` means "auto-fill" mode: both layers size themselves off the
  * percentage height of their (now dynamically-sized) ancestors instead of an explicit px value —
- * see `PalantirButtonGroup` for how the ancestor chain is made to have a real, bounded height.
+ * see `PalantirButtonGroup` for how the ancestor chain is made to have a real, bounded height in
+ * this mode, in both orientations (its wrapper is `flex: 1 1 0`, equally sharing/growing to fill
+ * the always-bounded container, whether that's dividing width in `"row"` orientation or height in
+ * `"column"`). When `buttonHeightPx` is a fixed number instead, this component always renders at
+ * exactly that height regardless of orientation — see `PalantirButtonGroup` for how its wrapper's
+ * sizing (and, in `"column"` orientation, the ability to "extend" past the widget's own available
+ * height) differs between the two `buttonHeightPx` cases.
+ *
+ * `orientation` doesn't affect this component's own width/height styling at all — it always
+ * fills 100% of whatever its layout wrapper resolves to, in both dimensions, regardless of
+ * stacking direction (see the class-level doc comment on `PalantirButtonGroup`). It's only used
+ * here to pick the right corner-rounding / interactive-margin direction for a joined chain — see
+ * `computeJoinedCornerRadii` and `computeEffectiveInteractiveMargins`.
  */
 export const PalantirButton: React.FC<PalantirButtonProps> = ({
   config,
   active,
   groupDisabled,
   buttonHeightPx,
+  orientation,
+  selectionMode,
   joinedPosition,
   onEvent,
 }) => {
@@ -112,6 +126,18 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
    * exclusive per activation. `change` still fires every time either way, carrying the resulting
    * `active` value, and remains what hosts should use to track persisted state. A momentary
    * button has no persistent active state, so it always fires `press` and never `unpress`.
+   *
+   * In a `"single-required"` group (see `SelectionMode`), a switch is never allowed to deactivate
+   * itself — only ever `active` here when it's the group's sole active switch, since single-select
+   * modes never allow more than one active at once — so a click that would deactivate it
+   * (`newActive === false`) is a no-op instead: no `pendingActive` override, no events fired. This
+   * has to be blocked *here*, before `pendingActive` is ever set, rather than left to Widget.tsx to
+   * refuse the resulting "change" event: `pendingActive` is this button's own optimistic local
+   * override, so if it were set to `false` here and the host then never echoed back a matching
+   * `active: false` (because the group correctly refused to actually deactivate it), the settle
+   * effect above would have nothing to ever agree with — `pendingActive` would stay stuck at
+   * `false` forever, permanently showing the button as deselected even though it's still the
+   * group's genuinely active one.
    */
   const commitActivation: () => void = useCallback(() => {
     if (isDisabled) {
@@ -119,6 +145,9 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     }
     if (config.mode === "switch") {
       const newActive = !active;
+      if (!newActive && selectionMode === "single-required") {
+        return;
+      }
       // Set synchronously, in the same handler/render as clearing isPointerDown, so the very same
       // render already reflects the switch's outcome instead of waiting for it to round-trip back
       // through the host as an updated `active` prop — see the comment on `pendingActive`'s
@@ -133,7 +162,7 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     } else {
       onEvent({ type: "press", id: config.id, active: false });
     }
-  }, [isDisabled, config.mode, config.id, active, onEvent]);
+  }, [isDisabled, config.mode, config.id, active, selectionMode, onEvent]);
 
   /**
    * Handles the pointer entering the button. Sets the hover state and emits a hover event if it hasn't been emitted yet.
@@ -341,8 +370,8 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
     [buttonHeightPx, config.roundingCoefficient],
   );
   const radii: { topLeft: number; topRight: number; bottomRight: number; bottomLeft: number } = useMemo(
-    () => computeJoinedCornerRadii(radiusPx, joinedPosition),
-    [radiusPx, joinedPosition],
+    () => computeJoinedCornerRadii(radiusPx, joinedPosition, orientation),
+    [radiusPx, joinedPosition, orientation],
   );
   const margins: { top: number; right: number; bottom: number; left: number } = useMemo(
     () =>
@@ -350,8 +379,9 @@ export const PalantirButton: React.FC<PalantirButtonProps> = ({
         config.interactiveMarginX,
         config.interactiveMarginY,
         joinedPosition,
+        orientation,
       ),
-    [config.interactiveMarginX, config.interactiveMarginY, joinedPosition],
+    [config.interactiveMarginX, config.interactiveMarginY, joinedPosition, orientation],
   );
 
   // Icons and background images aren't supported: the custom-widget iframe can't authenticate

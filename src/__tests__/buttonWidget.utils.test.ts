@@ -8,6 +8,7 @@ import {
   computeInitialActiveButtonIds,
   computeJoinedCornerRadii,
   computeEffectiveInteractiveMargins,
+  computeNextActiveButtonIds,
   DEFAULT_BUTTON_CONFIG,
   DEFAULT_GROUP_CONFIG,
   INVALID_JSON_MESSAGE,
@@ -331,18 +332,104 @@ describe("computeInitialActiveButtonIds", () => {
   ];
 
   it("falls back to each switch's defaultActive when the parameter is undefined (never configured)", () => {
-    expect(computeInitialActiveButtonIds(buttons, undefined)).toEqual(new Set(["layer"]));
+    expect(computeInitialActiveButtonIds(buttons, undefined, "independent")).toEqual(
+      new Set(["layer"]),
+    );
   });
 
   it("uses the explicitly provided array instead of defaultActive, even when empty", () => {
-    expect(computeInitialActiveButtonIds(buttons, [])).toEqual(new Set());
-    expect(computeInitialActiveButtonIds(buttons, ["grid"])).toEqual(new Set(["grid"]));
+    expect(computeInitialActiveButtonIds(buttons, [], "independent")).toEqual(new Set());
+    expect(computeInitialActiveButtonIds(buttons, ["grid"], "independent")).toEqual(
+      new Set(["grid"]),
+    );
   });
 
   it("ignores ids that don't refer to a known switch button", () => {
-    expect(computeInitialActiveButtonIds(buttons, ["run", "unknown-id", "layer"])).toEqual(
-      new Set(["layer"]),
+    expect(
+      computeInitialActiveButtonIds(buttons, ["run", "unknown-id", "layer"], "independent"),
+    ).toEqual(new Set(["layer"]));
+  });
+
+  describe("selectionMode 'single'/'single-required' capping", () => {
+    const multiDefaultButtons = [
+      makeResolvedButton({ id: "layer", mode: "switch", defaultActive: true }),
+      makeResolvedButton({ id: "grid", mode: "switch", defaultActive: true }),
+    ];
+
+    it("keeps only the first defaultActive switch (buttons array order) when more than one is set", () => {
+      expect(computeInitialActiveButtonIds(multiDefaultButtons, undefined, "single")).toEqual(
+        new Set(["layer"]),
+      );
+      expect(
+        computeInitialActiveButtonIds(multiDefaultButtons, undefined, "single-required"),
+      ).toEqual(new Set(["layer"]));
+    });
+
+    it("keeps only the first id (array order) when the host supplies a stale multi-entry activeButtonIdsJson", () => {
+      expect(computeInitialActiveButtonIds(buttons, ["grid", "layer"], "single")).toEqual(
+        new Set(["grid"]),
+      );
+    });
+
+    it("leaves a single defaultActive switch, or none at all, untouched", () => {
+      expect(computeInitialActiveButtonIds(buttons, undefined, "single")).toEqual(
+        new Set(["layer"]),
+      );
+      expect(computeInitialActiveButtonIds(buttons, [], "single-required")).toEqual(new Set());
+    });
+
+    it("doesn't cap anything in 'independent' mode, even with multiple defaultActive switches", () => {
+      expect(computeInitialActiveButtonIds(multiDefaultButtons, undefined, "independent")).toEqual(
+        new Set(["layer", "grid"]),
+      );
+    });
+  });
+});
+
+describe("computeNextActiveButtonIds", () => {
+  it("in 'independent' mode, adds/removes only this button's id, leaving every other untouched", () => {
+    const current = new Set(["a", "b"]);
+    expect(computeNextActiveButtonIds(current, { id: "c", active: true }, "independent")).toEqual(
+      new Set(["a", "b", "c"]),
     );
+    expect(computeNextActiveButtonIds(current, { id: "a", active: false }, "independent")).toEqual(
+      new Set(["b"]),
+    );
+  });
+
+  it("in 'single' mode, activating a button replaces the entire set with just that button's id", () => {
+    const current = new Set(["a"]);
+    expect(computeNextActiveButtonIds(current, { id: "b", active: true }, "single")).toEqual(
+      new Set(["b"]),
+    );
+  });
+
+  it("in 'single' mode, deactivating the active button clears the set to empty", () => {
+    const current = new Set(["a"]);
+    expect(computeNextActiveButtonIds(current, { id: "a", active: false }, "single")).toEqual(
+      new Set(),
+    );
+  });
+
+  it("in 'single-required' mode, activating a button replaces the entire set with just that button's id", () => {
+    const current = new Set(["a"]);
+    expect(
+      computeNextActiveButtonIds(current, { id: "b", active: true }, "single-required"),
+    ).toEqual(new Set(["b"]));
+  });
+
+  it("in 'single-required' mode, a deactivation is refused — the current set is returned unchanged", () => {
+    const current = new Set(["a"]);
+    const next = computeNextActiveButtonIds(current, { id: "a", active: false }, "single-required");
+    expect(next).toEqual(new Set(["a"]));
+    expect(areButtonIdSetsEqual(next, current)).toBe(true);
+  });
+
+  it("in 'single-required' mode, activating the very first button from a genuinely empty set still works", () => {
+    const current = new Set<string>();
+    expect(
+      computeNextActiveButtonIds(current, { id: "a", active: true }, "single-required"),
+    ).toEqual(new Set(["a"]));
   });
 });
 
@@ -422,6 +509,27 @@ describe("parseGroupConfig", () => {
     // rather than being treated as "use default".
     expect(config.buttonHeightPx).toBe(28);
     expect(config.disabled).toBe(false);
+  });
+
+  it("defaults orientation to 'row' when unset or invalid", () => {
+    expect(parseGroupConfig({}).orientation).toBe("row");
+    expect(parseGroupConfig({ orientation: "diagonal" }).orientation).toBe("row");
+  });
+
+  it("resolves an explicit 'column' orientation", () => {
+    expect(parseGroupConfig({ orientation: "column" }).orientation).toBe("column");
+  });
+
+  it("defaults selectionMode to 'independent' when unset or invalid", () => {
+    expect(parseGroupConfig({}).selectionMode).toBe("independent");
+    expect(parseGroupConfig({ selectionMode: "exclusive" }).selectionMode).toBe("independent");
+  });
+
+  it("resolves an explicit 'single'/'single-required' selectionMode", () => {
+    expect(parseGroupConfig({ selectionMode: "single" }).selectionMode).toBe("single");
+    expect(parseGroupConfig({ selectionMode: "single-required" }).selectionMode).toBe(
+      "single-required",
+    );
   });
 
   it("treats a negative buttonHeightPx/customGapPx as 'use default' instead of clamping to the minimum", () => {
@@ -673,74 +781,151 @@ describe("resolveButtonHeightPx", () => {
 });
 
 describe("computeJoinedCornerRadii", () => {
-  it("gives a single button all four corners", () => {
-    expect(computeJoinedCornerRadii(10, "single")).toEqual({
-      topLeft: 10,
-      topRight: 10,
-      bottomRight: 10,
-      bottomLeft: 10,
+  describe("row orientation", () => {
+    it("gives a single button all four corners", () => {
+      expect(computeJoinedCornerRadii(10, "single", "row")).toEqual({
+        topLeft: 10,
+        topRight: 10,
+        bottomRight: 10,
+        bottomLeft: 10,
+      });
+    });
+
+    it("gives the first button only its left corners", () => {
+      expect(computeJoinedCornerRadii(10, "first", "row")).toEqual({
+        topLeft: 10,
+        bottomLeft: 10,
+        topRight: 0,
+        bottomRight: 0,
+      });
+    });
+
+    it("gives the last button only its right corners", () => {
+      expect(computeJoinedCornerRadii(10, "last", "row")).toEqual({
+        topRight: 10,
+        bottomRight: 10,
+        topLeft: 0,
+        bottomLeft: 0,
+      });
+    });
+
+    it("gives middle buttons no rounded corners", () => {
+      expect(computeJoinedCornerRadii(10, "middle", "row")).toEqual({
+        topLeft: 0,
+        topRight: 0,
+        bottomRight: 0,
+        bottomLeft: 0,
+      });
     });
   });
 
-  it("gives the first button only its left corners", () => {
-    expect(computeJoinedCornerRadii(10, "first")).toEqual({
-      topLeft: 10,
-      bottomLeft: 10,
-      topRight: 0,
-      bottomRight: 0,
+  describe("column orientation", () => {
+    it("gives a single button all four corners", () => {
+      expect(computeJoinedCornerRadii(10, "single", "column")).toEqual({
+        topLeft: 10,
+        topRight: 10,
+        bottomRight: 10,
+        bottomLeft: 10,
+      });
     });
-  });
 
-  it("gives the last button only its right corners", () => {
-    expect(computeJoinedCornerRadii(10, "last")).toEqual({
-      topRight: 10,
-      bottomRight: 10,
-      topLeft: 0,
-      bottomLeft: 0,
+    it("gives the first (topmost) button only its top corners", () => {
+      expect(computeJoinedCornerRadii(10, "first", "column")).toEqual({
+        topLeft: 10,
+        topRight: 10,
+        bottomLeft: 0,
+        bottomRight: 0,
+      });
     });
-  });
 
-  it("gives middle buttons no rounded corners", () => {
-    expect(computeJoinedCornerRadii(10, "middle")).toEqual({
-      topLeft: 0,
-      topRight: 0,
-      bottomRight: 0,
-      bottomLeft: 0,
+    it("gives the last (bottommost) button only its bottom corners", () => {
+      expect(computeJoinedCornerRadii(10, "last", "column")).toEqual({
+        bottomLeft: 10,
+        bottomRight: 10,
+        topLeft: 0,
+        topRight: 0,
+      });
+    });
+
+    it("gives middle buttons no rounded corners", () => {
+      expect(computeJoinedCornerRadii(10, "middle", "column")).toEqual({
+        topLeft: 0,
+        topRight: 0,
+        bottomRight: 0,
+        bottomLeft: 0,
+      });
     });
   });
 });
 
 describe("computeEffectiveInteractiveMargins", () => {
-  it("zeroes the interior seam for joined middle buttons", () => {
-    expect(computeEffectiveInteractiveMargins(10, 4, "middle")).toEqual({
-      left: 0,
-      right: 0,
-      top: 4,
-      bottom: 4,
+  describe("row orientation", () => {
+    it("zeroes the interior seam for joined middle buttons", () => {
+      expect(computeEffectiveInteractiveMargins(10, 4, "middle", "row")).toEqual({
+        left: 0,
+        right: 0,
+        top: 4,
+        bottom: 4,
+      });
+    });
+
+    it("keeps the outer margin only for first/last joined buttons", () => {
+      expect(computeEffectiveInteractiveMargins(10, 4, "first", "row")).toEqual({
+        left: 10,
+        right: 0,
+        top: 4,
+        bottom: 4,
+      });
+      expect(computeEffectiveInteractiveMargins(10, 4, "last", "row")).toEqual({
+        left: 0,
+        right: 10,
+        top: 4,
+        bottom: 4,
+      });
+    });
+
+    it("keeps both margins for a standalone button", () => {
+      expect(computeEffectiveInteractiveMargins(10, 4, "single", "row")).toEqual({
+        left: 10,
+        right: 10,
+        top: 4,
+        bottom: 4,
+      });
     });
   });
 
-  it("keeps the outer margin only for first/last joined buttons", () => {
-    expect(computeEffectiveInteractiveMargins(10, 4, "first")).toEqual({
-      left: 10,
-      right: 0,
-      top: 4,
-      bottom: 4,
+  describe("column orientation", () => {
+    it("zeroes the interior seam (top/bottom, not left/right) for joined middle buttons", () => {
+      expect(computeEffectiveInteractiveMargins(10, 4, "middle", "column")).toEqual({
+        left: 10,
+        right: 10,
+        top: 0,
+        bottom: 0,
+      });
     });
-    expect(computeEffectiveInteractiveMargins(10, 4, "last")).toEqual({
-      left: 0,
-      right: 10,
-      top: 4,
-      bottom: 4,
-    });
-  });
 
-  it("keeps both margins for a standalone button", () => {
-    expect(computeEffectiveInteractiveMargins(10, 4, "single")).toEqual({
-      left: 10,
-      right: 10,
-      top: 4,
-      bottom: 4,
+    it("keeps the outer margin only for first/last joined buttons, zeroing the touching top/bottom side", () => {
+      expect(computeEffectiveInteractiveMargins(10, 4, "first", "column")).toEqual({
+        left: 10,
+        right: 10,
+        top: 4,
+        bottom: 0,
+      });
+      expect(computeEffectiveInteractiveMargins(10, 4, "last", "column")).toEqual({
+        left: 10,
+        right: 10,
+        top: 0,
+        bottom: 4,
+      });
+    });
+
+    it("keeps both margins for a standalone button", () => {
+      expect(computeEffectiveInteractiveMargins(10, 4, "single", "column")).toEqual({
+        left: 10,
+        right: 10,
+        top: 4,
+        bottom: 4,
+      });
     });
   });
 });

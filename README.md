@@ -6,9 +6,9 @@ See [CHANGELOG.md](./CHANGELOG.md) for what's changed in the button-group widget
 
 ## Button group widget
 
-The widget defined in `src/main.config.ts` renders a configurable, responsive row of momentary
-and/or switch buttons, driven entirely by Workshop parameters — no code changes needed for most
-customization.
+The widget defined in `src/main.config.ts` renders a configurable, responsive row (or, in
+`"column"` orientation, a vertical stack) of momentary and/or switch buttons, driven entirely by
+Workshop parameters — no code changes needed for most customization.
 
 **Buttons** are defined via `buttonsJson`, a JSON array of button objects. Each needs at least an
 `id` and a `label`; every other per-button field (`mode`, `paddingX`/`paddingY`,
@@ -32,15 +32,55 @@ renders its normal default colors, just faded (more transparent).
 group-wide `roundingCoefficient` parameter (0–0.5, default 0.2) that always applies to every
 button — there's no per-button `roundingCoefficient` field and no `roundingScheme` to opt into.
 
+**Orientation** controls which direction the group stacks. `orientation` is `"row"` (the default,
+horizontal, side by side) or `"column"` (vertical, top to bottom) — `buttonHeightPx` behaves like
+a direct rotation of its row meaning onto whichever axis `orientation` makes the "main" one:
+
+- **`buttonHeightPx` left unconfigured (or negative)** means "auto-fill": buttons equally share
+  the available space, *growing to fill it* if there's room to spare. In `"row"` orientation this
+  divides width (unchanged from before orientation existed); in `"column"` orientation it divides
+  height instead — buttons **expand to fill up the available height**, exactly mimicking row
+  orientation's fill behavior, rather than staying small.
+- **`buttonHeightPx` set to a fixed number** makes every button exactly that size instead, and
+  stops it from being shared/grown into. In `"row"` orientation this is just the button's height
+  (its width still always equal-shares, unaffected). In `"column"` orientation this is now the
+  *stacking* axis, so with few/short buttons there's simply empty room left over below them; with
+  more buttons than fit, the group **extends past the widget's own tile height** instead of being
+  squeezed to fit — the widget's outer container becomes scrollable in this case so nothing is
+  lost, rather than silently clipping the extra buttons.
+
+`layoutMode`'s three values apply along whichever axis `orientation` is set to — e.g. `"joined"`
+rounds the top/bottom seam corners in column orientation instead of left/right, and
+`customGapPx`/the fixed `space-between` gap apply vertically instead of horizontally.
+
+**Selection mode** controls how the group's switch buttons relate to each other, via
+`selectionMode`. Only switch-mode buttons are affected either way — momentary buttons have no
+persistent active state to relate.
+
+- **`"independent"`** (the default): every switch tracks its own active state with no relation to
+  any other — unchanged from before `selectionMode` existed.
+- **`"single"`**: a classic radio-button group. Activating a switch deactivates every other switch
+  that was active, so at most one is ever active at a time. Deactivating the currently active
+  switch (clicking it again) is still allowed, bringing the group back to zero active.
+- **`"single-required"`**: the same radio behavior as `"single"`, except the group is never
+  allowed to drop from one active switch back down to zero. Once a switch is active — whether from
+  a click or from a button's own `defaultActive` — clicking it again to turn it off is refused; the
+  only way to change the selection is to activate a *different* switch. The group can still start
+  out with none active (when nothing sets `defaultActive` and the host hasn't supplied
+  `activeButtonIdsJson`) — that's the only state the "always one active" rule doesn't cover, since
+  nothing has ever been activated yet.
+
 **Layout** is controlled by the group-level parameters:
 
 | Parameter                 | Range / values                              | Notes                                                                                                    |
 | -------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `layoutMode`               | `joined` \| `space-between` \| `custom-gap`  | All three fill the group's width with equal-width buttons. `joined` renders a connected segmented control (no gap, seam corners); `custom-gap` inserts `customGapPx` between buttons; `space-between` keeps each button's independent corners/borders with a fixed 24px gap (not configurable). |
+| `layoutMode`               | `joined` \| `space-between` \| `custom-gap`  | All three fill the group's cross-axis size with equal-share buttons. `joined` renders a connected segmented control (no gap, seam corners); `custom-gap` inserts `customGapPx` between buttons; `space-between` keeps each button's independent corners/borders with a fixed 24px gap (not configurable). |
+| `orientation`               | `row` \| `column`, default `row`             | Stack buttons horizontally (`row`) or vertically (`column`); see above.                                     |
+| `selectionMode`              | `independent` \| `single` \| `single-required`, default `independent` | How switch buttons' active state relates to each other — see above.                       |
 | `customGapPx`               | 0–128px, default 8                           | Gap between buttons; only applied in `custom-gap` mode — `space-between` always uses a fixed 24px gap instead.  |
-| `groupPaddingPx`            | 0–128px, default 0                           | Padding between the button row and the outer group boundary.                                                |
-| `buttonHeightPx`            | 28–240px, or blank/negative for auto-fill    | Fixed visible-button height. Leave unconfigured or set negative to have buttons automatically fill the widget's available height instead.                                          |
-| `buttonVerticalPaddingPx`   | 0–64px, default 0                            | Vertical layout space placed above and below every button, outside its own height — independent of a button's internal `paddingY` and its `interactiveMarginY` hit area.            |
+| `groupPaddingPx`            | 0–128px, default 0                           | Padding between the button row/stack and the outer group boundary.                                          |
+| `buttonHeightPx`            | 28–240px, or blank/negative for auto-fill    | Each button's height (always literally height, in both orientations), fixed — or leave unconfigured/negative to have buttons equally share and grow to fill the available space instead — see above. |
+| `buttonVerticalPaddingPx`   | 0–64px, default 0                            | Vertical layout space placed above and below every button, outside its own height — independent of a button's internal `paddingY` and its `interactiveMarginY` hit area. Applies the same way in both orientations.            |
 | `{primary\|secondary\|tertiary}BackgroundColor` / `*TextColor` | string, e.g. `"#2563eb"` | That scheme's default (unpressed) look.                                              |
 | `{primary\|secondary\|tertiary}HoverBackgroundColor` / `*HoverTextColor` | string      | That scheme's hover look.                                                            |
 | `{primary\|secondary\|tertiary}PressedBackgroundColor` / `*PressedTextColor` | string  | That scheme's pressed/active look (a selected switch reuses this — see above).       |

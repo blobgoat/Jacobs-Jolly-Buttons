@@ -34,6 +34,9 @@ const BASE_CONFIG: ResolvedButtonConfig = {
 function renderButton(overrides: Partial<ResolvedButtonConfig> = {}, props: Partial<{
   active: boolean;
   groupDisabled: boolean;
+  orientation: "row" | "column";
+  selectionMode: "independent" | "single" | "single-required";
+  joinedPosition: "single" | "first" | "middle" | "last";
 }> = {}) {
   const onEvent = vi.fn<(event: InternalButtonEvent) => void>();
   const { container } = render(
@@ -42,7 +45,9 @@ function renderButton(overrides: Partial<ResolvedButtonConfig> = {}, props: Part
       active={props.active ?? false}
       groupDisabled={props.groupDisabled ?? false}
       buttonHeightPx={40}
-      joinedPosition="single"
+      orientation={props.orientation ?? "row"}
+      selectionMode={props.selectionMode ?? "independent"}
+      joinedPosition={props.joinedPosition ?? "single"}
       onEvent={onEvent}
     />,
   );
@@ -183,6 +188,8 @@ describe("PalantirButton switch behavior", () => {
         active={true}
         groupDisabled={false}
         buttonHeightPx={40}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
@@ -201,6 +208,8 @@ describe("PalantirButton switch behavior", () => {
     const props = {
       groupDisabled: false,
       buttonHeightPx: 40,
+      orientation: "row" as const,
+      selectionMode: "independent" as const,
       joinedPosition: "single" as const,
       onEvent: vi.fn(),
     };
@@ -226,6 +235,8 @@ describe("PalantirButton switch behavior", () => {
       const props = {
         groupDisabled: false,
         buttonHeightPx: 40,
+        orientation: "row" as const,
+        selectionMode: "independent" as const,
         joinedPosition: "single" as const,
         onEvent: vi.fn(),
       };
@@ -271,12 +282,77 @@ describe("PalantirButton switch behavior", () => {
         active={true}
         groupDisabled={false}
         buttonHeightPx={40}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
     );
     const pressLayer = container.querySelector(".palantir-button-press-layer") as HTMLElement;
     expect(pressLayer.style.transform).toBe("translateY(0px)");
+  });
+});
+
+describe("PalantirButton selectionMode", () => {
+  it("blocks a click from deactivating the sole active switch in a 'single-required' group", async () => {
+    const { onEvent } = renderButton(
+      { mode: "switch" },
+      { active: true, selectionMode: "single-required" },
+    );
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    // No event of any kind — the click is a complete no-op, not just a suppressed "change".
+    expect(onEvent).not.toHaveBeenCalled();
+    // Still shows active (aria-pressed), never having flipped to pendingActive: false.
+    expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not stay stuck showing inactive after a blocked 'single-required' deactivation click", async () => {
+    // Regression guard for the exact bug the block has to avoid: if commitActivation had let
+    // pendingActive flip to false before being blocked, and the host (correctly) never echoes
+    // back active: false, pendingActive would never have anything to agree with and the button
+    // would show deselected forever. Asserting aria-pressed stays "true" across a render tick
+    // (not just synchronously right after the click) confirms no such stuck state exists.
+    renderButton({ mode: "switch" }, { active: true, selectionMode: "single-required" });
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(button).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("still allows deactivating the active switch in a plain 'single' group (not required)", async () => {
+    const { onEvent } = renderButton(
+      { mode: "switch" },
+      { active: true, selectionMode: "single" },
+    );
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    expect(onEvent).toHaveBeenCalledWith({ type: "change", id: "test-button", active: false });
+  });
+
+  it("still allows activating an inactive switch in a 'single-required' group", async () => {
+    const { onEvent } = renderButton(
+      { mode: "switch" },
+      { active: false, selectionMode: "single-required" },
+    );
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    expect(onEvent).toHaveBeenCalledWith({ type: "change", id: "test-button", active: true });
+  });
+
+  it("does not block a momentary button's press in a 'single-required' group (selectionMode only governs switches)", async () => {
+    const { onEvent } = renderButton(
+      { mode: "momentary" },
+      { active: true, selectionMode: "single-required" },
+    );
+    const button = screen.getByRole("button", { name: "Test Button" });
+    const user = userEvent.setup();
+    await user.click(button);
+    expect(onEvent).toHaveBeenCalledWith({ type: "press", id: "test-button", active: false });
   });
 });
 
@@ -293,6 +369,8 @@ describe("PalantirButton color rendering", () => {
         active={true}
         groupDisabled={false}
         buttonHeightPx={40}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
@@ -313,6 +391,8 @@ describe("PalantirButton color rendering", () => {
         active={false}
         groupDisabled={true}
         buttonHeightPx={40}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
@@ -457,6 +537,8 @@ describe("PalantirButton width and height", () => {
         active={false}
         groupDisabled={false}
         buttonHeightPx={48}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
@@ -488,6 +570,8 @@ describe("PalantirButton width and height", () => {
         active={false}
         groupDisabled={false}
         buttonHeightPx={null}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
@@ -507,6 +591,8 @@ describe("PalantirButton interactive margin / hit area", () => {
         active={false}
         groupDisabled={false}
         buttonHeightPx={40}
+        orientation="row"
+        selectionMode="independent"
         joinedPosition="single"
         onEvent={vi.fn()}
       />,
@@ -518,5 +604,46 @@ describe("PalantirButton interactive margin / hit area", () => {
     const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
     expect(surface).not.toBeNull();
     expect(surface.style.padding).toBe("8px 14px");
+  });
+});
+
+describe("PalantirButton orientation-aware joined corners/margins", () => {
+  it("rounds the top corners (not left) for the first button in a 'column' joined chain", () => {
+    const { container } = renderButton({}, { orientation: "column", joinedPosition: "first" });
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.borderTopLeftRadius).not.toBe("0px");
+    expect(surface.style.borderTopRightRadius).not.toBe("0px");
+    expect(surface.style.borderBottomLeftRadius).toBe("0px");
+    expect(surface.style.borderBottomRightRadius).toBe("0px");
+  });
+
+  it("rounds the bottom corners (not right) for the last button in a 'column' joined chain", () => {
+    const { container } = renderButton({}, { orientation: "column", joinedPosition: "last" });
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.borderBottomLeftRadius).not.toBe("0px");
+    expect(surface.style.borderBottomRightRadius).not.toBe("0px");
+    expect(surface.style.borderTopLeftRadius).toBe("0px");
+    expect(surface.style.borderTopRightRadius).toBe("0px");
+  });
+
+  it("zeroes the vertical (not horizontal) interior seam margin for a 'column' middle button", () => {
+    const { container } = renderButton(
+      { interactiveMarginX: 10, interactiveMarginY: 4 },
+      { orientation: "column", joinedPosition: "middle" },
+    );
+    const button = container.querySelector(".palantir-button-hit-area") as HTMLElement;
+    expect(button.style.paddingTop).toBe("0px");
+    expect(button.style.paddingBottom).toBe("0px");
+    expect(button.style.paddingLeft).toBe("10px");
+    expect(button.style.paddingRight).toBe("10px");
+  });
+
+  it("still rounds left/right corners for the first button in a 'row' joined chain (unaffected)", () => {
+    const { container } = renderButton({}, { orientation: "row", joinedPosition: "first" });
+    const surface = container.querySelector(".palantir-button-visual-surface") as HTMLElement;
+    expect(surface.style.borderTopLeftRadius).not.toBe("0px");
+    expect(surface.style.borderBottomLeftRadius).not.toBe("0px");
+    expect(surface.style.borderTopRightRadius).toBe("0px");
+    expect(surface.style.borderBottomRightRadius).toBe("0px");
   });
 });

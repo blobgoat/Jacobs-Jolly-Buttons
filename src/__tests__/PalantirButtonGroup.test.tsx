@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { PalantirButtonGroup } from "../components/PalantirButtonGroup.js";
 import type { PalantirButtonGroupProps, ResolvedButtonConfig } from "../buttonWidget.types.js";
@@ -31,6 +32,8 @@ function makeButton(overrides: Partial<ResolvedButtonConfig>): ResolvedButtonCon
 }
 
 const DEFAULT_PROPS: Omit<PalantirButtonGroupProps, "buttons" | "layoutMode"> = {
+  orientation: "row",
+  selectionMode: "independent",
   customGapPx: 8,
   groupPaddingPx: 0,
   buttonHeightPx: 40,
@@ -388,5 +391,215 @@ describe("PalantirButtonGroup row containment (bounded to real available height)
     screen.getAllByRole("button").forEach((button) => {
       expect(button.style.height).toBe("100%");
     });
+  });
+});
+
+describe("PalantirButtonGroup column orientation (stacking)", () => {
+  it("uses flexDirection: column instead of row", () => {
+    renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" }), makeButton({ id: "b", label: "B" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+    });
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.flexDirection).toBe("column");
+  });
+
+  it("is content-sized (flex: 0 0 auto), not bounded like row orientation", () => {
+    renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+    });
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.flex).toBe("0 0 auto");
+  });
+
+  it("gives every wrapper content-sized flex (0 0 auto), not equal-share, and full width", () => {
+    const { container } = renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" }), makeButton({ id: "b", label: "B" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+    });
+    const wrappers = container.querySelectorAll<HTMLElement>('[data-testid="button-layout-wrapper"]');
+    expect(wrappers).toHaveLength(2);
+    wrappers.forEach((wrapper) => {
+      expect(wrapper.style.flex).toBe("0 0 auto");
+      expect(wrapper.style.width).toBe("100%");
+    });
+  });
+
+  it("always uses alignItems: stretch, regardless of buttonHeightPx", () => {
+    const fixed = renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      buttonHeightPx: 40,
+    });
+    expect(screen.getByTestId("palantir-button-group").style.alignItems).toBe("stretch");
+    fixed.unmount();
+
+    renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      buttonHeightPx: null,
+    });
+    expect(screen.getByTestId("palantir-button-group").style.alignItems).toBe("stretch");
+  });
+
+  it("stretches every button to fill its wrapper's height (100%) when buttonHeightPx is null, mimicking row orientation's fill behavior", () => {
+    const { container } = renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" }), makeButton({ id: "b", label: "B" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      buttonHeightPx: null,
+    });
+    screen.getAllByRole("button").forEach((button) => {
+      expect(button.style.height).toBe("100%");
+    });
+    const surfaces = document.querySelectorAll<HTMLElement>(".palantir-button-visual-surface");
+    surfaces.forEach((surface) => {
+      // Not a fixed px value — sized as a fraction of the (dynamically-sized) hit area's height,
+      // same as row orientation's auto-fill mode.
+      expect(surface.style.height).toContain("calc(100% /");
+    });
+    const wrappers = container.querySelectorAll<HTMLElement>('[data-testid="button-layout-wrapper"]');
+    wrappers.forEach((wrapper) => {
+      // Equal-share (not content-sized) so multiple buttons divide — and can grow to fill — the
+      // bounded container's height together, exactly like row orientation always divides width.
+      expect(wrapper.style.flex).toBe("1 1 0px");
+    });
+  });
+
+  it("bounds (min-height: 0) and lets buttons equally share/grow when buttonHeightPx is null, but leaves min-height at its default (auto) to let a fixed-height stack extend past it", () => {
+    const auto = renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      buttonHeightPx: null,
+    });
+    expect(screen.getByTestId("palantir-button-group").style.minHeight).toBe("0px");
+    auto.unmount();
+
+    renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      buttonHeightPx: 40,
+    });
+    // Left unset (not "0px") — the CSS default of "auto" refuses to shrink this container below
+    // its content's natural size, which is what allows a tall fixed-height stack to extend past
+    // the widget's own available height instead of being squeezed to fit.
+    expect(screen.getByTestId("palantir-button-group").style.minHeight).toBe("");
+  });
+
+  it("keeps a configured buttonHeightPx as the exact per-button height, content-sized (not filling)", () => {
+    const { container } = renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      buttonHeightPx: 64,
+    });
+    const surface = document.querySelector<HTMLElement>(".palantir-button-visual-surface")!;
+    expect(surface.style.height).toBe("64px");
+    const wrapper = container.querySelector<HTMLElement>('[data-testid="button-layout-wrapper"]')!;
+    expect(wrapper.style.flex).toBe("0 0 auto");
+  });
+
+  it("rounds top corners for the first and bottom corners for the last button in a joined column stack", () => {
+    const { container } = renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" }), makeButton({ id: "b", label: "B" }), makeButton({ id: "c", label: "C" })],
+      layoutMode: "joined",
+      orientation: "column",
+    });
+    const surfaces = container.querySelectorAll<HTMLElement>(".palantir-button-visual-surface");
+    const first = surfaces[0];
+    expect(first.style.borderTopLeftRadius).not.toBe("0px");
+    expect(first.style.borderTopRightRadius).not.toBe("0px");
+    expect(first.style.borderBottomLeftRadius).toBe("0px");
+    expect(first.style.borderBottomRightRadius).toBe("0px");
+
+    const middle = surfaces[1];
+    expect(middle.style.borderTopLeftRadius).toBe("0px");
+    expect(middle.style.borderBottomRightRadius).toBe("0px");
+
+    const last = surfaces[2];
+    expect(last.style.borderBottomLeftRadius).not.toBe("0px");
+    expect(last.style.borderBottomRightRadius).not.toBe("0px");
+    expect(last.style.borderTopLeftRadius).toBe("0px");
+    expect(last.style.borderTopRightRadius).toBe("0px");
+  });
+
+  it("zeroes the vertical interior seam (not horizontal) for joined column buttons with interactive margins", () => {
+    renderGroup({
+      buttons: [
+        makeButton({ id: "a", label: "A", interactiveMarginX: 10, interactiveMarginY: 10 }),
+        makeButton({ id: "b", label: "B", interactiveMarginX: 10, interactiveMarginY: 10 }),
+      ],
+      layoutMode: "joined",
+      orientation: "column",
+    });
+    const buttons = screen.getAllByRole("button");
+    // The interior seam (first button's bottom edge, second button's top edge) must be zeroed so
+    // the two transparent hit areas never overlap or double up vertically.
+    expect(buttons[0].style.paddingBottom).toBe("0px");
+    expect(buttons[1].style.paddingTop).toBe("0px");
+    // The outer edges and horizontal margins retain the configured value.
+    expect(buttons[0].style.paddingTop).toBe("10px");
+    expect(buttons[1].style.paddingBottom).toBe("10px");
+    expect(buttons[0].style.paddingLeft).toBe("10px");
+    expect(buttons[1].style.paddingRight).toBe("10px");
+  });
+
+  it("applies the gap vertically (between stacked buttons) in custom-gap column mode", () => {
+    renderGroup({
+      buttons: [makeButton({ id: "a", label: "A" }), makeButton({ id: "b", label: "B" })],
+      layoutMode: "custom-gap",
+      orientation: "column",
+      customGapPx: 24,
+    });
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.flexDirection).toBe("column");
+    expect(group.style.gap).toBe("24px");
+  });
+});
+
+describe("PalantirButtonGroup selectionMode", () => {
+  it("forwards selectionMode down to every button (single-required blocks deactivating the sole active one)", async () => {
+    const onButtonEvent = vi.fn();
+    renderGroup({
+      buttons: [
+        makeButton({ id: "a", label: "A", mode: "switch" }),
+        makeButton({ id: "b", label: "B", mode: "switch" }),
+      ],
+      layoutMode: "custom-gap",
+      selectionMode: "single-required",
+      activeButtonIds: new Set(["a"]),
+      onButtonEvent,
+    });
+    const user = userEvent.setup();
+
+    // Clicking the already-active button ("a") is blocked entirely — no event at all.
+    await user.click(screen.getByRole("button", { name: "A" }));
+    expect(onButtonEvent).not.toHaveBeenCalled();
+
+    // Clicking the inactive button ("b") still works normally, selecting it.
+    await user.click(screen.getByRole("button", { name: "B" }));
+    expect(onButtonEvent).toHaveBeenCalledWith({ type: "change", id: "b", active: true });
+  });
+
+  it("still allows deactivating the sole active button when selectionMode is plain 'single'", async () => {
+    const onButtonEvent = vi.fn();
+    renderGroup({
+      buttons: [makeButton({ id: "a", label: "A", mode: "switch" })],
+      layoutMode: "custom-gap",
+      selectionMode: "single",
+      activeButtonIds: new Set(["a"]),
+      onButtonEvent,
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "A" }));
+    expect(onButtonEvent).toHaveBeenCalledWith({ type: "change", id: "a", active: false });
   });
 });

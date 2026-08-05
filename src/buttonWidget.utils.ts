@@ -5,8 +5,10 @@ import type {
   ColorSchemeTier,
   JoinedPosition,
   LayoutMode,
+  Orientation,
   ResolvedButtonConfig,
   ResolvedGroupConfig,
+  SelectionMode,
 } from "./buttonWidget.types.js";
 
 /** The three named color/font-size scheme tiers a button can opt into, in display order. */
@@ -14,6 +16,16 @@ export const COLOR_SCHEME_NAMES = ["primary", "secondary", "tertiary"] as const 
 
 /** `COLOR_SCHEME_NAMES` plus "none" (opt out to the button's own inline fields). */
 export const COLOR_SCHEME_TIERS = [...COLOR_SCHEME_NAMES, "none"] as const satisfies readonly ColorSchemeTier[];
+
+/** The two directions a button group can stack in — see `Orientation`. */
+export const ORIENTATIONS = ["row", "column"] as const satisfies readonly Orientation[];
+
+/** The three ways a group's switch buttons' active state can relate to each other — see `SelectionMode`. */
+export const SELECTION_MODES = [
+  "independent",
+  "single",
+  "single-required",
+] as const satisfies readonly SelectionMode[];
 
 // ---------------------------------------------------------------------------
 // Numeric clamping ranges (section 9 of the spec)
@@ -137,6 +149,11 @@ const DEFAULT_TERTIARY_SCHEME_COLORS: ColorSchemeColors = {
 
 export const DEFAULT_GROUP_CONFIG: ResolvedGroupConfig = {
   layoutMode: "joined",
+  // "row" preserves the only behavior this widget had before orientation was configurable.
+  orientation: "row",
+  // "independent" preserves the only behavior this widget had before selectionMode was
+  // configurable — every switch tracks its own active state with no relation to any other.
+  selectionMode: "independent",
   customGapPx: 8,
   groupPaddingPx: 0,
   // `null` = auto-fill the widget's available height. This is the default: an author who never
@@ -672,31 +689,82 @@ export function applyButtonVisibilityAndDisabled(
  * Computes the initial active-button-id set from `activeButtonIdsJson` (the array parameter; if
  * present, even an empty array) or from each switch button's `defaultActive` flag otherwise
  * (when the parameter is `undefined`, i.e. never configured), restricted to known switch buttons.
+ *
+ * When `selectionMode` isn't `"independent"`, a group can only ever have at most one active
+ * button — but the two sources above don't inherently guarantee that (buttonsJson could set
+ * `defaultActive: true` on several buttons, e.g. left over from before selectionMode was turned
+ * on; a host could likewise supply a stale multi-entry `activeButtonIdsJson`). In that case only
+ * the *first* id — in whichever order the source above produced them (host-array order for
+ * `activeButtonIdsJson`, `buttons` array order for `defaultActive`) — is kept; the rest are
+ * dropped rather than rendering multiple simultaneously "selected" buttons.
  */
 export function computeInitialActiveButtonIds(
   buttons: ResolvedButtonConfig[],
   activeButtonIds: readonly string[] | undefined,
+  selectionMode: SelectionMode,
 ): Set<string> {
   const switchIds = new Set(buttons.filter((b) => b.mode === "switch").map((b) => b.id));
 
+  let resolved: Set<string>;
   if (activeButtonIds !== undefined) {
     // Only keep IDs that refer to known switch buttons; ignore unknown IDs.
-    const reconciled = new Set<string>();
+    resolved = new Set<string>();
     activeButtonIds.forEach((id) => {
       if (switchIds.has(id)) {
-        reconciled.add(id);
+        resolved.add(id);
       }
     });
-    return reconciled;
+  } else {
+    resolved = new Set<string>();
+    buttons.forEach((b) => {
+      if (b.mode === "switch" && b.defaultActive) {
+        resolved.add(b.id);
+      }
+    });
   }
 
-  const defaults = new Set<string>();
-  buttons.forEach((b) => {
-    if (b.mode === "switch" && b.defaultActive) {
-      defaults.add(b.id);
+  if (selectionMode !== "independent" && resolved.size > 1) {
+    const [first] = resolved;
+    resolved = new Set(first !== undefined ? [first] : []);
+  }
+  return resolved;
+}
+
+/**
+ * Computes the next active-button-id set after a switch button's "change" event, honoring the
+ * group's `selectionMode` (see that type's doc comment for the full behavior spec):
+ *
+ * - `"independent"`: this button's id alone is added or removed from `current`; every other
+ *   button's state is left untouched, exactly as before `selectionMode` existed.
+ * - `"single"`: activating a button (`event.active === true`) replaces the *entire* set with just
+ *   that button's id, deactivating every other button that was active — a classic radio-button
+ *   group. Deactivating the currently active button is allowed and clears the set to empty.
+ * - `"single-required"`: same radio behavior as `"single"` for activation. A deactivation
+ *   (`event.active === false`) is refused — `current` is returned unchanged (as a new `Set`
+ *   instance with the same content, so callers comparing by content via `areButtonIdSetsEqual`
+ *   can detect the no-op) — so the group can never drop from one active button back to zero.
+ *   `PalantirButton.commitActivation` already blocks the click itself from ever producing this
+ *   event in the first place for a single-required group's sole active button; this function
+ *   enforces the same rule defensively regardless of caller.
+ */
+export function computeNextActiveButtonIds(
+  current: ReadonlySet<string>,
+  event: { id: string; active: boolean },
+  selectionMode: SelectionMode,
+): Set<string> {
+  if (selectionMode === "independent") {
+    const next = new Set(current);
+    if (event.active) {
+      next.add(event.id);
+    } else {
+      next.delete(event.id);
     }
-  });
-  return defaults;
+    return next;
+  }
+  if (!event.active) {
+    return selectionMode === "single-required" ? new Set(current) : new Set();
+  }
+  return new Set([event.id]);
 }
 
 // ---------------------------------------------------------------------------
@@ -748,6 +816,8 @@ function resolveSchemeColors(values: RawSchemeColorValues, fallback: ColorScheme
 
 export function parseGroupConfig(values: {
   layoutMode?: string;
+  orientation?: string;
+  selectionMode?: string;
   customGapPx?: number;
   groupPaddingPx?: number;
   buttonHeightPx?: number;
@@ -789,6 +859,12 @@ export function parseGroupConfig(values: {
       values.layoutMode,
       ["joined", "space-between", "custom-gap"] as const satisfies readonly LayoutMode[],
       DEFAULT_GROUP_CONFIG.layoutMode,
+    ),
+    orientation: parseEnumValue(values.orientation, ORIENTATIONS, DEFAULT_GROUP_CONFIG.orientation),
+    selectionMode: parseEnumValue(
+      values.selectionMode,
+      SELECTION_MODES,
+      DEFAULT_GROUP_CONFIG.selectionMode,
     ),
     // customGapPx/groupPaddingPx are pixel dimensions: a negative value resets each field to its
     // default rather than clamping up to its minimum.
@@ -962,11 +1038,30 @@ export function computeBorderRadiusPx(buttonHeightPx: number, roundingCoefficien
   return buttonHeightPx * clampedCoefficient;
 }
 
-/** Returns the per-corner border radius (in px) for a button given its position in a joined chain. */
+/**
+ * Returns the per-corner border radius (in px) for a button given its position in a joined
+ * chain. In `"row"` orientation a chain runs left-to-right, so "first"/"last" round the left/
+ * right corners (the classic segmented-control look); in `"column"` orientation the chain runs
+ * top-to-bottom instead, so "first"/"last" round the top/bottom corners.
+ */
 export function computeJoinedCornerRadii(
   radiusPx: number,
   joinedPosition: JoinedPosition,
+  orientation: Orientation,
 ): { topLeft: number; topRight: number; bottomRight: number; bottomLeft: number } {
+  if (orientation === "column") {
+    switch (joinedPosition) {
+      case "first":
+        return { topLeft: radiusPx, topRight: radiusPx, bottomLeft: 0, bottomRight: 0 };
+      case "last":
+        return { bottomLeft: radiusPx, bottomRight: radiusPx, topLeft: 0, topRight: 0 };
+      case "middle":
+        return { topLeft: 0, topRight: 0, bottomRight: 0, bottomLeft: 0 };
+      case "single":
+      default:
+        return { topLeft: radiusPx, topRight: radiusPx, bottomRight: radiusPx, bottomLeft: radiusPx };
+    }
+  }
   switch (joinedPosition) {
     case "first":
       return { topLeft: radiusPx, bottomLeft: radiusPx, topRight: 0, bottomRight: 0 };
@@ -982,13 +1077,34 @@ export function computeJoinedCornerRadii(
 
 /**
  * Returns the effective left/right/top/bottom interactive margins (px) for a button, accounting
- * for joined-mode margin zeroing on the interior seams between adjacent buttons.
+ * for joined-mode margin zeroing on the interior seams between adjacent buttons. In `"row"`
+ * orientation, buttons are horizontally adjacent, so the X margin is zeroed on the touching
+ * side(s) while the Y margin is always kept in full. In `"column"` orientation it's the reverse:
+ * buttons are vertically adjacent, so the Y margin is zeroed on the touching side(s) while the X
+ * margin is always kept in full.
  */
 export function computeEffectiveInteractiveMargins(
   interactiveMarginX: number,
   interactiveMarginY: number,
   joinedPosition: JoinedPosition,
+  orientation: Orientation,
 ): { left: number; right: number; top: number; bottom: number } {
+  if (orientation === "column") {
+    const left = interactiveMarginX;
+    const right = interactiveMarginX;
+    switch (joinedPosition) {
+      case "first":
+        return { left, right, top: interactiveMarginY, bottom: 0 };
+      case "last":
+        return { left, right, top: 0, bottom: interactiveMarginY };
+      case "middle":
+        return { left, right, top: 0, bottom: 0 };
+      case "single":
+      default:
+        return { left, right, top: interactiveMarginY, bottom: interactiveMarginY };
+    }
+  }
+
   const top = interactiveMarginY;
   const bottom = interactiveMarginY;
 

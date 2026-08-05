@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`selectionMode`** (group-level, `"independent"` \| `"single"` \| `"single-required"`, default
+  `"independent"`): governs how the group's switch buttons' active state relates to each other.
+  `"independent"` is unchanged from before — every switch tracks its own active state with no
+  relation to any other. `"single"` turns the group into a classic radio-button group: activating
+  a switch deactivates every other active switch, so at most one is ever active; deactivating the
+  currently active one is still allowed, bringing the group back to zero active. `"single-required"`
+  behaves the same way for activation, but refuses to ever drop the group from one active switch
+  back down to zero — once a switch is active (from a click, or from a button's own
+  `defaultActive`), clicking it again to deselect it is a no-op; the only way to change the
+  selection is to activate a different switch. A `"single-required"` group can still start out with
+  none active, if nothing sets `defaultActive` and the host hasn't supplied `activeButtonIdsJson` —
+  that's the one state the "always one active" rule doesn't cover, since nothing's been activated
+  yet. Only affects switch-mode buttons; momentary buttons have no persistent active state either
+  way.
+
+## [5.0.0] - 2026-08-05
+
+### Added
+
 - **`buttonVerticalPaddingPx`** (group-level, 0–64px, default `0`): vertical layout space placed
   above and below every button, outside the button's own height. It's independent of a button's
   internal `paddingY` (inner content spacing) and its `interactiveMarginY` (transparent hit
@@ -43,6 +62,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   scheme and there's no per-button opt-in/opt-out. The per-button `roundingCoefficient` field has
   been removed from `buttonsJson`; buttons already configuring it will simply have that JSON
   ignored.
+- **`orientation`** (group-level, `"row"` \| `"column"`, default `"row"`): lays the button group
+  out vertically instead of only horizontally. `"row"` is unchanged from before this existed.
+  `buttonHeightPx` behaves like a direct rotation of its row meaning onto whichever axis
+  `orientation` makes the "main" one: left unconfigured/negative, buttons equally share the
+  available space and **grow to fill it** if there's room to spare (in `"column"` orientation
+  this means buttons expand to fill up the available height, mirroring `"row"` orientation's
+  fill behavior exactly, rather than staying small); set to a fixed number, every button is
+  exactly that size instead and doesn't grow — in `"column"` orientation, that lets a stack with
+  more buttons than fit **extend past the widget's own tile height** instead of being squeezed,
+  with the widget's outer container becoming vertically scrollable in this orientation so nothing
+  is lost. `layoutMode`'s three values (`joined`/`custom-gap`/`space-between`) now apply along
+  whichever axis `orientation` is set to: e.g. a `"joined"` chain rounds its top/bottom seam
+  corners in `"column"` orientation instead of left/right, and gaps apply vertically instead of
+  horizontally.
 
 ### Changed
 
@@ -56,6 +89,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `disabledBackgroundColor`/`disabledTextColor` pair — the fade itself signals disabled,
   regardless of the button's actual colors. These two per-button fields have been removed;
   buttons already configuring them will simply have that JSON ignored.
+- **Merged the `infoOnFontSizeScheme` info toggle into `infoOnColorScheme`** (now documenting both
+  `colorScheme` and `fontSizeScheme` together) to stay within Workshop's 50-parameter cap after
+  adding `orientation`. Purely a documentation-panel change — neither toggle's boolean value was
+  ever read, so this has no functional effect.
 
 - **Buttons now automatically divide and fill the available group width**, equally, in every
   `layoutMode` — `joined`, `custom-gap`, and `space-between` — using CSS flexbox instead of

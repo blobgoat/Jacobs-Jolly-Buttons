@@ -6,6 +6,41 @@ export type ButtonMode = "momentary" | "switch";
 
 export type LayoutMode = "joined" | "space-between" | "custom-gap";
 
+/**
+ * Which direction the button group stacks in. `"row"` (the default) lays buttons out
+ * horizontally, side by side, exactly as before this was configurable. `"column"` stacks them
+ * vertically instead — see `PalantirButtonGroup`'s `containerStyle` for how layout sizing
+ * differs between the two (row stays bounded to the widget's available height and shares that
+ * height/width evenly; column is content-sized and grows/"extends" with however many buttons
+ * there are, scrolling if it doesn't fit — see Widget.tsx's outer container). `layoutMode`'s
+ * three values (`joined`/`custom-gap`/`space-between`) apply along whichever axis this is set
+ * to — e.g. `joined` seam corners round top/bottom in column mode instead of left/right.
+ */
+export type Orientation = "row" | "column";
+
+/**
+ * How the group's switch buttons' active state relates to each other. Only affects switch-mode
+ * buttons — momentary buttons have no persistent active state and are unaffected either way.
+ *
+ * - `"independent"` (the default): every switch tracks its own active state independently,
+ *   exactly as before this was configurable — any number of switches (including all of them, or
+ *   none) can be active at once.
+ * - `"single"`: a classic radio-button group. Activating a switch deactivates every other active
+ *   switch in the group, so at most one is ever active at a time. Deactivating the currently
+ *   active switch (clicking it again) is still allowed and brings the group back to zero active,
+ *   the same as `"independent"`.
+ * - `"single-required"`: the same radio behavior as `"single"`, except the group is never allowed
+ *   to drop from one active switch back down to zero — once any switch is active (whether from a
+ *   click or from a button's own `defaultActive`), clicking it again to deactivate it is refused;
+ *   the only way to change the selection is to activate a *different* switch instead. The group
+ *   can still start out with zero active switches (when nothing configures `defaultActive` and
+ *   the host hasn't supplied `activeButtonIdsJson`) — that's the one state this doesn't guard,
+ *   since nothing has ever been activated yet. See `computeNextActiveButtonIds` (where a
+ *   deactivation is refused) and `PalantirButton.commitActivation` (which blocks the click itself
+ *   from ever firing that deactivation, so the button never gets stuck showing the wrong state).
+ */
+export type SelectionMode = "independent" | "single" | "single-required";
+
 export type ButtonInteraction = "hover" | "hoverEnd" | "press" | "unpress" | "change";
 
 /** One of the group's three named schemes (color, font size, or shadow), or "none" to opt out. */
@@ -153,12 +188,21 @@ export interface ResolvedButtonConfig {
 /** Resolved, widget-level (group) configuration. */
 export interface ResolvedGroupConfig {
   layoutMode: LayoutMode;
+  /** See `Orientation`. Defaults to `"row"`. */
+  orientation: Orientation;
+  /** See `SelectionMode`. Defaults to `"independent"`. */
+  selectionMode: SelectionMode;
   customGapPx: number;
   groupPaddingPx: number;
   /**
    * Fixed visible-button height in px, or `null` to automatically fill whatever vertical space
-   * is actually available in the widget. `null` results from the parameter being left
-   * unconfigured or set to a negative number — see `resolveButtonHeightPx`.
+   * is actually available (buttons equally sharing, and growing to fill, the bounded group) —
+   * `null` results from the parameter being left unconfigured or set to a negative number, see
+   * `resolveButtonHeightPx`. Applies along whichever axis `orientation` makes the "main" one: the
+   * row's width in `"row"` orientation (unchanged from before orientation existed), or the
+   * stack's height in `"column"` orientation. A fixed number in `"column"` orientation is also
+   * what lets the stack "extend" past the widget's own available height instead of being
+   * squeezed to fit — see `PalantirButtonGroup`'s class-level doc comment.
    */
   buttonHeightPx: number | null;
   /**
@@ -221,6 +265,8 @@ export interface PalantirButtonGroupProps {
   buttons: ResolvedButtonConfig[];
 
   layoutMode: LayoutMode;
+  orientation: Orientation;
+  selectionMode: SelectionMode;
   customGapPx: number;
   groupPaddingPx: number;
 
@@ -240,6 +286,8 @@ export interface PalantirButtonProps {
   groupDisabled: boolean;
 
   buttonHeightPx: number | null;
+  orientation: Orientation;
+  selectionMode: SelectionMode;
 
   joinedPosition: JoinedPosition;
 

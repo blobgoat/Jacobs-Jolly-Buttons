@@ -353,6 +353,96 @@ describe("Widget responsive layout", () => {
   });
 });
 
+describe("Widget orientation (row vs column)", () => {
+  beforeEach(() => {
+    mockedUseWidgetContext.mockReset();
+  });
+
+  it("defaults to row orientation: flexDirection row, outer container clips overflow", () => {
+    setContext({});
+    const { container } = render(<Widget />);
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.flexDirection).toBe("row");
+    const outer = container.firstElementChild?.firstElementChild as HTMLElement;
+    expect(outer.style.overflowY).toBe("hidden");
+  });
+
+  it("switches to flexDirection column and lets the outer container scroll instead of clipping", () => {
+    setContext({ values: { orientation: "column" } });
+    const { container } = render(<Widget />);
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.flexDirection).toBe("column");
+    const outer = container.firstElementChild?.firstElementChild as HTMLElement;
+    expect(outer.style.overflowY).toBe("auto");
+  });
+
+  it("makes the column-orientation group content-sized (0 0 auto) instead of bounded (1 1 auto)", () => {
+    setContext({ values: { orientation: "column" } });
+    render(<Widget />);
+    const group = screen.getByTestId("palantir-button-group");
+    expect(group.style.flex).toBe("0 0 auto");
+  });
+
+  it("stretches buttons to fill available height (mimicking row orientation) when buttonHeightPx is unconfigured in column orientation", () => {
+    const values: Record<string, unknown> = {
+      buttonsJson: BUTTONS_JSON,
+      layoutMode: "custom-gap",
+      orientation: "column",
+      customGapPx: 8,
+      groupPaddingPx: 0,
+      buttonVerticalPaddingPx: 0,
+      disabled: false,
+      disabledButtonIdsArray: [],
+      hiddenButtonIdsArray: [],
+      lastButtonId: "",
+      lastButtonInteraction: "",
+      lastButtonActive: false,
+      activeButtonIdsJson: [],
+      // buttonHeightPx intentionally omitted — never configured.
+    };
+    mockedUseWidgetContext.mockReturnValue({
+      parameters: { state: "loaded", values },
+      emitEvent: vi.fn(),
+    } as unknown as ReturnType<typeof useWidgetContext>);
+    render(<Widget />);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    buttons.forEach((button) => {
+      expect(button.style.height).toBe("100%");
+    });
+    const group = screen.getByTestId("palantir-button-group");
+    // Container stays bounded (min-height: 0) in this case, so the buttons equally share/grow
+    // into the available height rather than extending past it.
+    expect(group.style.minHeight).toBe("0px");
+  });
+
+  it("lets a fixed buttonHeightPx stack extend past the widget's available height instead of being squeezed to fit", () => {
+    setContext({ values: { orientation: "column", buttonHeightPx: 200 } });
+    const { container } = render(<Widget />);
+    const group = screen.getByTestId("palantir-button-group");
+    // Left unset (CSS default "auto"), not "0px" — this is what refuses to shrink the group
+    // below its content's natural (min-content) size when there isn't enough room.
+    expect(group.style.minHeight).toBe("");
+    const surfaces = container.querySelectorAll<HTMLElement>(".palantir-button-visual-surface");
+    surfaces.forEach((surface) => {
+      expect(surface.style.height).toBe("200px");
+    });
+  });
+
+  it("rounds the top corners of the first button and bottom corners of the last in a joined column stack", () => {
+    setContext({ values: { orientation: "column", layoutMode: "joined" } });
+    const { container } = render(<Widget />);
+    const surfaces = container.querySelectorAll<HTMLElement>(".palantir-button-visual-surface");
+    expect(surfaces).toHaveLength(2);
+    const first = surfaces[0];
+    expect(first.style.borderTopLeftRadius).not.toBe("0px");
+    expect(first.style.borderBottomLeftRadius).toBe("0px");
+    const last = surfaces[1];
+    expect(last.style.borderBottomRightRadius).not.toBe("0px");
+    expect(last.style.borderTopRightRadius).toBe("0px");
+  });
+});
+
 describe("Widget disabled propagation", () => {
   beforeEach(() => {
     mockedUseWidgetContext.mockReset();
@@ -549,5 +639,162 @@ describe("Widget hiddenButtonIdsArray / disabledButtonIdsArray", () => {
     });
     render(<Widget />);
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  });
+});
+
+describe("Widget selectionMode (radio-style switches)", () => {
+  beforeEach(() => {
+    mockedUseWidgetContext.mockReset();
+  });
+
+  const RADIO_BUTTONS_JSON = JSON.stringify([
+    { id: "small", label: "Small", mode: "switch" },
+    { id: "medium", label: "Medium", mode: "switch" },
+    { id: "large", label: "Large", mode: "switch" },
+  ]);
+
+  it("activating one switch deactivates every other switch in 'single' mode", async () => {
+    const emitEvent = setContext({
+      values: { buttonsJson: RADIO_BUTTONS_JSON, selectionMode: "single", activeButtonIdsJson: ["small"] },
+    });
+    render(<Widget />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Medium" }));
+
+    expect(screen.getByRole("button", { name: "Small" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Medium" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Large" })).toHaveAttribute("aria-pressed", "false");
+    expect(emitEvent).toHaveBeenCalledWith("buttonChanged", {
+      parameterUpdates: {
+        lastButtonId: "medium",
+        lastButtonInteraction: "change",
+        lastButtonActive: true,
+        activeButtonIdsJson: ["medium"],
+      },
+    });
+  });
+
+  it("allows deactivating the sole active switch back to none in 'single' mode", async () => {
+    const emitEvent = setContext({
+      values: { buttonsJson: RADIO_BUTTONS_JSON, selectionMode: "single", activeButtonIdsJson: ["small"] },
+    });
+    render(<Widget />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Small" }));
+
+    expect(screen.getByRole("button", { name: "Small" })).toHaveAttribute("aria-pressed", "false");
+    expect(emitEvent).toHaveBeenCalledWith("buttonChanged", {
+      parameterUpdates: {
+        lastButtonId: "small",
+        lastButtonInteraction: "change",
+        lastButtonActive: false,
+        activeButtonIdsJson: [],
+      },
+    });
+  });
+
+  it("refuses to deactivate the sole active switch in 'single-required' mode — it stays active and no event fires", async () => {
+    const emitEvent = setContext({
+      values: {
+        buttonsJson: RADIO_BUTTONS_JSON,
+        selectionMode: "single-required",
+        activeButtonIdsJson: ["small"],
+      },
+    });
+    render(<Widget />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Small" }));
+
+    expect(screen.getByRole("button", { name: "Small" })).toHaveAttribute("aria-pressed", "true");
+    expect(emitEvent).not.toHaveBeenCalledWith("buttonChanged", expect.anything());
+  });
+
+  it("still allows switching the selection to a different switch in 'single-required' mode", async () => {
+    const emitEvent = setContext({
+      values: {
+        buttonsJson: RADIO_BUTTONS_JSON,
+        selectionMode: "single-required",
+        activeButtonIdsJson: ["small"],
+      },
+    });
+    render(<Widget />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Large" }));
+
+    expect(screen.getByRole("button", { name: "Small" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Large" })).toHaveAttribute("aria-pressed", "true");
+    expect(emitEvent).toHaveBeenCalledWith("buttonChanged", {
+      parameterUpdates: {
+        lastButtonId: "large",
+        lastButtonInteraction: "change",
+        lastButtonActive: true,
+        activeButtonIdsJson: ["large"],
+      },
+    });
+  });
+
+  it("allows a genuinely fresh 'single-required' group (nothing configured, no interaction yet) to start with zero active, and locks in on first click", async () => {
+    const emitEvent = setContext({
+      values: { buttonsJson: RADIO_BUTTONS_JSON, selectionMode: "single-required" },
+    });
+    render(<Widget />);
+    screen.getAllByRole("button").forEach((button) => {
+      expect(button).toHaveAttribute("aria-pressed", "false");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Medium" }));
+    expect(screen.getByRole("button", { name: "Medium" })).toHaveAttribute("aria-pressed", "true");
+    expect(emitEvent).toHaveBeenCalledWith("buttonChanged", {
+      parameterUpdates: {
+        lastButtonId: "medium",
+        lastButtonInteraction: "change",
+        lastButtonActive: true,
+        activeButtonIdsJson: ["medium"],
+      },
+    });
+
+    // Now that one is active, deactivating it is refused, same as a defaultActive-seeded group.
+    emitEvent.mockClear();
+    await user.click(screen.getByRole("button", { name: "Medium" }));
+    expect(screen.getByRole("button", { name: "Medium" })).toHaveAttribute("aria-pressed", "true");
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("caps multiple defaultActive switches down to just the first when selectionMode isn't 'independent'", () => {
+    setContext({
+      values: {
+        buttonsJson: JSON.stringify([
+          { id: "small", label: "Small", mode: "switch", defaultActive: true },
+          { id: "medium", label: "Medium", mode: "switch", defaultActive: true },
+        ]),
+        selectionMode: "single",
+        activeButtonIdsJson: undefined,
+      },
+    });
+    render(<Widget />);
+    expect(screen.getByRole("button", { name: "Small" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Medium" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("leaves independent mode's default multi-active behavior unaffected", async () => {
+    const emitEvent = setContext({
+      values: { buttonsJson: RADIO_BUTTONS_JSON, selectionMode: "independent", activeButtonIdsJson: ["small"] },
+    });
+    render(<Widget />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Medium" }));
+
+    // Both stay active — selectionMode "independent" never deactivates other switches.
+    expect(screen.getByRole("button", { name: "Small" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Medium" })).toHaveAttribute("aria-pressed", "true");
+    expect(emitEvent).toHaveBeenCalledWith("buttonChanged", {
+      parameterUpdates: {
+        lastButtonId: "medium",
+        lastButtonInteraction: "change",
+        lastButtonActive: true,
+        activeButtonIdsJson: ["small", "medium"],
+      },
+    });
   });
 });
