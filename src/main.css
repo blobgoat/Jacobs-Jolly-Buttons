@@ -6,7 +6,8 @@
    turn PalantirButtonGroup's row (`flex: 1 1 auto`) and every `buttonHeightPx: null` "auto-fill"
    button, had nothing real to resolve against and silently fell back to auto/content sizing.
    This re-establishes that chain from the real viewport/host container down to `#root`. */
-html, body {
+html,
+body {
     margin: 0;
     height: 100%;
     /* The widget's own containers (Widget.tsx's root Flex, PalantirButtonGroup's row) already
@@ -16,15 +17,22 @@ html, body {
        vertical scrollbar could still appear (e.g. in the local dev preview, which has no
        Workshop-provided fixed-height container), which is the "scrolling" this is meant to stop. */
     overflow-y: hidden;
+    /* Without an explicit background-color, html/body fall back to the browser's own default
+       canvas paint for the page instead of actually being transparent — #root below already sets
+       its own transparent background, but that's moot if body (its parent) is opaque underneath
+       it. An explicit "transparent" here is a real painted value, not an absence of one. */
+    background-color: transparent;
 }
 
 #root {
     height: 100%;
+    background-color: transparent;
 }
 
 .radix-themes:where([data-is-root-theme='true']) {
     height: 100%;
     min-height: 0;
+
     @supports(min-height: 100dvh) {
         min-height: 0;
     }
@@ -55,6 +63,7 @@ html, body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
     .palantir-button-visual-surface,
     .palantir-button-press-layer {
         transition-duration: 0.01ms;

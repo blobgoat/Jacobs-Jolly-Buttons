@@ -213,6 +213,16 @@ export interface ResolvedGroupConfig {
   buttonVerticalPaddingPx: number;
   disabled: boolean;
   /**
+   * Explicit CSS background paint for the group's own container — the box behind/around the
+   * buttons, inside the group's padding — resolved from the `groupBackgroundColor` Workshop
+   * parameter. Defaults to `"transparent"` when unconfigured. This is deliberately an explicit
+   * painted value applied inline on the container (see Widget.tsx), not just "leave it unset" —
+   * an unset background can still end up painted by something further up the ancestor chain (or,
+   * per Foundry/Workshop's own embedding, some rendering quirk outside this widget's control);
+   * an explicit `"transparent"` here always wins regardless of what the real cause of that is.
+   */
+  groupBackgroundColor: string;
+  /**
    * The group's three named color schemes ("primary", "secondary", "tertiary"), each resolved
    * from 6 flat Workshop parameters (e.g. `primaryBackgroundColor`, `primaryHoverTextColor`, ...).
    * A button picks one via its own `colorScheme` field (`ButtonConfig.colorScheme`) — see

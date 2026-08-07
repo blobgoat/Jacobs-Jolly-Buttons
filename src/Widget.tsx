@@ -17,11 +17,9 @@ import {
   parseGroupConfig,
   toButtonIdSet,
 } from "./buttonWidget.utils.js";
-import { useDarkTheme } from "./useDarkTheme.js";
 
 export const Widget: React.FC = () => {
   const { parameters, emitEvent } = useWidgetContext();
-  const isDarkTheme = useDarkTheme();
 
   const isLoading = parameters.state === "not-started" || parameters.state === "loading";
 
@@ -60,6 +58,7 @@ export const Widget: React.FC = () => {
         buttonHeightPx: parameters.values.buttonHeightPx,
         buttonVerticalPaddingPx: parameters.values.buttonVerticalPaddingPx,
         disabled: parameters.values.disabled,
+        groupBackgroundColor: parameters.values.groupBackgroundColor,
 
         primaryBackgroundColor: parameters.values.primaryBackgroundColor,
         primaryTextColor: parameters.values.primaryTextColor,
@@ -100,6 +99,7 @@ export const Widget: React.FC = () => {
       parameters.values.buttonHeightPx,
       parameters.values.buttonVerticalPaddingPx,
       parameters.values.disabled,
+      parameters.values.groupBackgroundColor,
       parameters.values.primaryBackgroundColor,
       parameters.values.primaryTextColor,
       parameters.values.primaryHoverBackgroundColor,
@@ -252,7 +252,7 @@ export const Widget: React.FC = () => {
   );
 
   return (
-    <Theme appearance={isDarkTheme ? "dark" : "light"} hasBackground={false}>
+    <Theme appearance="light" hasBackground={false}>
       <Flex
         direction="column"
         align="center"
@@ -271,6 +271,11 @@ export const Widget: React.FC = () => {
           minWidth: "0px",
           minHeight: "0px",
           boxSizing: "border-box",
+          // Explicit paint, not "unset" — see ResolvedGroupConfig.groupBackgroundColor for why
+          // this needs to be a real painted value rather than relying on nothing further up the
+          // chain (Theme's hasBackground={false}, html/body's own background-color: transparent)
+          // ever ending up opaque for a reason outside this widget's own render tree.
+          backgroundColor: groupConfig.groupBackgroundColor,
           // "row" orientation's button group is always bounded to exactly this available space,
           // so nothing can ever overflow it — "hidden" is just a safety net. "column"
           // orientation intentionally lets the button stack grow taller than this box so it can

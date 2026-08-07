@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`groupBackgroundColor`** (group-level, string, default `"transparent"`): explicit background
+  paint on the button group's own container (behind/around the buttons, inside `groupPaddingPx`).
+  Previously the container simply had no `background-color` set at all, relying on nothing further
+  up the ancestor chain (Theme's `hasBackground={false}`, `html`/`body`'s own
+  `background-color: transparent`) ever painting something opaque underneath it — which held up in
+  every part of this codebase we could inspect, but apparently didn't always hold up once actually
+  embedded in a Workshop tile. This parameter makes the paint explicit and configurable instead of
+  implicit, so it wins regardless of the actual cause.
+
+### Changed
+
+- Merged the `infoOnShadowScheme` "Info" toggle into `infoOnColorScheme` (both documented the same
+  `colorScheme`/`fontSizeScheme`/`shadowScheme` enum shape) to free a parameter slot for
+  `groupBackgroundColor` — Workshop's 50-parameter budget was already fully used.
+
 - **`selectionMode`** (group-level, `"independent"` \| `"single"` \| `"single-required"`, default
   `"independent"`): governs how the group's switch buttons' active state relates to each other.
   `"independent"` is unchanged from before — every switch tracks its own active state with no

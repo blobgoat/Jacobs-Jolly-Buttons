@@ -44,14 +44,12 @@ export default defineConfig({
       displayName: "Info: for any *Px field above, a negative number resets it to its default value.",
       type: "boolean",
     },
+    // Merged with the old infoOnShadowScheme toggle (freed a parameter slot for
+    // groupBackgroundColor below) — all three scheme fields share the same enum shape.
     infoOnColorScheme: {
       displayName:
-        "Info: colorScheme/fontSizeScheme — primary|secondary|tertiary|none, default none, " +
-        "pick a scheme.",
-      type: "boolean",
-    },
-    infoOnShadowScheme: {
-      displayName: "Info: shadowScheme (primary|secondary|tertiary|none, default none) picks a shadow depth.",
+        "Info: colorScheme/fontSizeScheme/shadowScheme pick primary|secondary|tertiary|none, " +
+        "default none.",
       type: "boolean",
     },
     infoOnColorsBase: {
@@ -110,6 +108,15 @@ export default defineConfig({
         "Button vertical padding — only vertical layout space placed " +
         "above and below each button.",
       type: "number",
+    },
+    // Explicit paint on the group's own container (behind/around the buttons, inside their
+    // padding), not just "unset" — an explicit "transparent" is a real painted value that wins
+    // over any ancestor's own background, unlike leaving this unset. Blank/unconfigured also
+    // resolves to "transparent" (see parseGroupConfig), matching this widget's default look.
+    groupBackgroundColor: {
+      displayName:
+        'Button group background color (string, e.g. "transparent", "#ffffff"). Default transparent.',
+      type: "string",
     },
 
     // --- Color, font-size & shadow schemes, plus universal rounding ------------

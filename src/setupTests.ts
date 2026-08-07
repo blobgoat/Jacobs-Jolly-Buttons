@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 // jsdom's matchMedia support is inconsistent across environments; guard with a deterministic
-// fallback so `useDarkTheme()` never throws.
+// fallback so Radix internals that call it never throw.
 if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
   window.matchMedia = (query: string) =>
     ({

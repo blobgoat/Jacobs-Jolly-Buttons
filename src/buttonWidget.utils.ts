@@ -162,6 +162,8 @@ export const DEFAULT_GROUP_CONFIG: ResolvedGroupConfig = {
   buttonHeightPx: null,
   buttonVerticalPaddingPx: 0,
   disabled: false,
+  // Explicit paint, not just "unset" — see ResolvedGroupConfig.groupBackgroundColor.
+  groupBackgroundColor: "transparent",
   colorSchemes: {
     primary: DEFAULT_PRIMARY_SCHEME_COLORS,
     secondary: DEFAULT_SECONDARY_SCHEME_COLORS,
@@ -823,6 +825,7 @@ export function parseGroupConfig(values: {
   buttonHeightPx?: number;
   buttonVerticalPaddingPx?: number;
   disabled?: boolean;
+  groupBackgroundColor?: string;
 
   primaryBackgroundColor?: string;
   primaryTextColor?: string;
@@ -894,6 +897,12 @@ export function parseGroupConfig(values: {
       DEFAULT_GROUP_CONFIG.buttonVerticalPaddingPx,
     ),
     disabled: parseBooleanValue(values.disabled, DEFAULT_GROUP_CONFIG.disabled),
+    // Blank/unconfigured (Workshop delivers an unset string param as "") falls back to
+    // "transparent" via parseStringValue, same as every other string field here.
+    groupBackgroundColor: parseStringValue(
+      values.groupBackgroundColor,
+      DEFAULT_GROUP_CONFIG.groupBackgroundColor,
+    ),
     colorSchemes: {
       primary: resolveSchemeColors(
         {
